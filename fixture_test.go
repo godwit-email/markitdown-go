@@ -357,7 +357,7 @@ func TestZIPBudgets(t *testing.T) {
 		t.Fatalf("%#v", res)
 	}
 
-	mixed := zipOf(t, map[string]string{"a.txt": "alpha", "b.html": "<p>nope</p>"})
+	mixed := zipOf(t, map[string]string{"a.txt": "alpha", "b.bin": "nope"})
 	res, err = Extract(bytes.NewReader(mixed), "", "m.zip", 0)
 	if err != nil {
 		t.Fatal(err)
