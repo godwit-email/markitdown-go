@@ -9,6 +9,7 @@ import (
 
 	"github.com/godwit-email/markitdown-go"
 	"github.com/godwit-email/markitdown-go/csv"
+	"github.com/godwit-email/markitdown-go/docx"
 	"github.com/godwit-email/markitdown-go/html"
 	"github.com/godwit-email/markitdown-go/text"
 	"github.com/godwit-email/markitdown-go/xls"
@@ -90,6 +91,22 @@ func TestPythonParity(t *testing.T) {
 		{
 			name: "xls/excel-mime", mediaType: "application/excel",
 			filename: "test.xls", file: "test.xls", direct: xls.Extract,
+		},
+		{
+			name: "docx/fixture", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			filename: "test.docx", file: "test.docx", direct: docx.Extract,
+		},
+		{
+			name: "docx/comment", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			filename: "test_with_comment.docx", file: "test_with_comment.docx", direct: docx.Extract,
+		},
+		{
+			name: "docx/equations", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			filename: "equations.docx", file: "equations.docx", direct: docx.Extract,
+		},
+		{
+			name: "docx/rlink", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			filename: "rlink.docx", file: "rlink.docx", direct: docx.Extract,
 		},
 	}
 	for _, tc := range cases {

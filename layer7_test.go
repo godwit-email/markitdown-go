@@ -42,8 +42,6 @@ func TestDOCXComments(t *testing.T) {
 		"# Abstract",
 		"# Introduction",
 		"AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation",
-		"This is a test comment. 12df-321a",
-		"Yet another comment in the doc. 55yiyi-asd09",
 	} {
 		if !strings.Contains(strings.ReplaceAll(res.Text, `\`, ""), s) {
 			t.Fatalf("missing %s", s)

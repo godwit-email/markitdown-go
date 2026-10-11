@@ -80,11 +80,39 @@ func mathNode(n *xmlsafe.Node) string {
 		return mathPart(n, "e") + "^{" + mathPart(n, "sup") + "}"
 	case "f":
 		return `\frac{` + mathPart(n, "num") + "}{" + mathPart(n, "den") + "}"
+	case "d":
+		return mathDelim(n)
 	case "e", "sub", "sup", "num", "den", "fName", "deg", "oMath", "oMathPara":
 		return mathChildren(n)
 	default:
 		return mathChildren(n)
 	}
+}
+
+func mathDelim(n *xmlsafe.Node) string {
+	left, right := "(", ")"
+	var body strings.Builder
+	for _, c := range n.Kids {
+		switch c.Local {
+		case "dPr":
+			left = delimChar(c, "begChr", "(")
+			right = delimChar(c, "endChr", ")")
+		case "e":
+			body.WriteString(mathChildren(c))
+		}
+	}
+	return `\left` + left + body.String() + `\right` + right
+}
+
+func delimChar(pr *xmlsafe.Node, local, fallback string) string {
+	ch := xmlsafe.FindFirst(pr, local)
+	if ch == nil {
+		return fallback
+	}
+	if v := ch.Attr["val"]; v != "" {
+		return v
+	}
+	return "."
 }
 
 func mathPart(n *xmlsafe.Node, local string) string {
