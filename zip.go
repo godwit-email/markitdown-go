@@ -201,32 +201,89 @@ func notesBody(root *xnode) string {
 	return b.String()
 }
 
-func renderSlide(root *xnode) string {
+type slideEnv struct {
+	zr   *zip.Reader
+	name string
+	keep bool
+}
+
+func renderSlide(root *xnode, env slideEnv) string {
 	var b strings.Builder
 	tree := findFirst(root, "spTree")
 	if tree == nil {
 		tree = root
 	}
-	writeShapes(&b, tree)
+	writeShapes(&b, tree, env)
 	return b.String()
 }
 
-func writeShapes(b *strings.Builder, n *xnode) {
+func writeShapes(b *strings.Builder, n *xnode, env slideEnv) {
 	for _, c := range n.kids {
 		switch c.local {
 		case "sp", "cxnSp":
 			writeShape(b, c)
+		case "pic":
+			writePic(b, c, env)
 		case "grpSp":
-			writeShapes(b, c)
+			writeShapes(b, c, env)
 		case "graphicFrame":
 			if tbl := findFirst(c, "tbl"); tbl != nil {
 				if table := renderDrawTable(tbl); table != "" {
 					b.WriteString(table)
 					b.WriteByte('\n')
 				}
+				continue
+			}
+			if chart := findFirst(c, "chart"); chart != nil {
+				if md := renderChart(env, chart); md != "" {
+					b.WriteString(md)
+					b.WriteByte('\n')
+				}
 			}
 		}
 	}
+}
+
+func writePic(b *strings.Builder, pic *xnode, env slideEnv) {
+	alt := picAlt(pic)
+	rid := picEmbed(pic)
+	if env.keep && rid != "" && env.zr != nil {
+		for _, rel := range zipRels(env.zr, relsPath(env.name), "image") {
+			if rel.id != rid {
+				continue
+			}
+			blob, err := readZip(env.zr, rel.target)
+			if err != nil {
+				break
+			}
+			defaults, overrides := contentTypes(env.zr)
+			info := imageInfo(rel.target, blob, defaults, overrides)
+			if info.MIME == "" && strings.EqualFold(info.Ext, ".svg") {
+				info.MIME = "image/svg+xml"
+			}
+			b.WriteString(imageMarkdown(alt, info, true))
+			b.WriteByte('\n')
+			return
+		}
+	}
+	if alt != "" {
+		b.WriteString(alt)
+		b.WriteByte('\n')
+	}
+}
+
+func picEmbed(pic *xnode) string {
+	for _, svg := range findAll(pic, "svgBlip") {
+		if svg.attr["embed"] != "" {
+			return svg.attr["embed"]
+		}
+	}
+	for _, blip := range findAll(pic, "blip") {
+		if blip.attr["embed"] != "" {
+			return blip.attr["embed"]
+		}
+	}
+	return ""
 }
 
 func writeShape(b *strings.Builder, sp *xnode) {
