@@ -1,6 +1,8 @@
-package markitdown
+package markitdown_test
 
 import (
+	"context"
+	"github.com/godwit-email/markitdown-go"
 	"strings"
 	"testing"
 )
@@ -127,11 +129,11 @@ func TestCSVLongBackslashRun(t *testing.T) {
 
 func mustCSV(t *testing.T, content string) string {
 	t.Helper()
-	res, err := Extract(strings.NewReader(content), "text/csv; charset=utf-8", "a.csv", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader(content), MIME: "text/csv; charset=utf-8", Filename: "a.csv", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindCSV || res.Partial {
+	if res.Kind != "csv" || res.Partial {
 		t.Fatalf("%#v", res)
 	}
 	return res.Text

@@ -1,8 +1,10 @@
-package markitdown
+package markitdown_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"github.com/godwit-email/markitdown-go"
 	"io"
 	"strings"
 	"testing"
@@ -11,52 +13,52 @@ import (
 )
 
 func TestExtractTooLargeDoesNotReadPastCap(t *testing.T) {
-	r := &countReader{left: maxInput + 100}
-	_, err := Extract(r, "text/plain", "a.txt", 0)
-	if !errors.Is(err, ErrTooLarge) {
+	r := &countReader{left: markitdown.MaxInput + 100}
+	_, err := markitdown.Extract(context.Background(), markitdown.Request{R: r, MIME: "text/plain", Filename: "a.txt", MaxOut: 0})
+	if !errors.Is(err, markitdown.ErrTooLarge) {
 		t.Fatalf("err = %v", err)
 	}
-	if r.read > maxInput+1 {
-		t.Fatalf("read %d bytes, cap is %d", r.read, maxInput+1)
+	if r.read > markitdown.MaxInput+1 {
+		t.Fatalf("read %d bytes, cap is %d", r.read, markitdown.MaxInput+1)
 	}
 }
 
 func TestExtractTruncatesOutput(t *testing.T) {
-	res, err := Extract(strings.NewReader("abcdefghijklmnopqrstuvwxyz"), "text/plain", "a.txt", 4)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("abcdefghijklmnopqrstuvwxyz"), MIME: "text/plain", Filename: "a.txt", MaxOut: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Text != "abcd" || !res.Partial || res.Kind != KindText {
+	if res.Text != "abcd" || !res.Partial || res.Kind != "text" {
 		t.Fatalf("%#v", res)
 	}
 }
 
 func TestExtractDefaultMaxOut(t *testing.T) {
-	res, err := Extract(strings.NewReader("hello"), "", "note.txt", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("hello"), MIME: "", Filename: "note.txt", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Text != "hello" || res.Partial || res.Kind != KindText {
+	if res.Text != "hello" || res.Partial || res.Kind != "text" {
 		t.Fatalf("%#v", res)
 	}
 }
 
 func TestMIMEBeatsExtension(t *testing.T) {
-	res, err := Extract(strings.NewReader("a,b\n1,2\n"), "text/plain", "a.csv", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("a,b\n1,2\n"), MIME: "text/plain", Filename: "a.csv", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindText || res.Text != "a,b\n1,2\n" {
+	if res.Kind != "text" || res.Text != "a,b\n1,2\n" {
 		t.Fatalf("%#v", res)
 	}
 }
 
 func TestOctetStreamUsesExtension(t *testing.T) {
-	res, err := Extract(strings.NewReader("a,b\n1,2\n"), "application/octet-stream", "a.csv", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("a,b\n1,2\n"), MIME: "application/octet-stream", Filename: "a.csv", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindCSV || res.Text != "| a | b |\n| --- | --- |\n| 1 | 2 |" {
+	if res.Kind != "csv" || res.Text != "| a | b |\n| --- | --- |\n| 1 | 2 |" {
 		t.Fatalf("%#v", res)
 	}
 }
@@ -66,19 +68,19 @@ func TestUnsupported(t *testing.T) {
 		{"application/octet-stream", "a.bin"},
 	}
 	for _, tc := range cases {
-		_, err := Extract(strings.NewReader("x"), tc.mime, tc.name, 0)
-		if !errors.Is(err, ErrUnsupported) {
+		_, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("x"), MIME: tc.mime, Filename: tc.name, MaxOut: 0})
+		if !errors.Is(err, markitdown.ErrUnsupported) {
 			t.Errorf("%s %s: %v", tc.mime, tc.name, err)
 		}
 	}
 }
 
 func TestOrdinaryTextAndNoneWord(t *testing.T) {
-	res, err := Extract(strings.NewReader("hello, world\n"), "", "a.txt", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("hello, world\n"), MIME: "", Filename: "a.txt", MaxOut: 0})
 	if err != nil || res.Text != "hello, world\n" {
 		t.Fatalf("%#v %v", res, err)
 	}
-	res, err = Extract(strings.NewReader("value,note\nNone,missing\n"), "", "a.csv", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("value,note\nNone,missing\n"), MIME: "", Filename: "a.csv", MaxOut: 0})
 	if err != nil || res.Text != "| value | note |\n| --- | --- |\n| None | missing |" {
 		t.Fatalf("%#v %v", res, err)
 	}
@@ -90,7 +92,7 @@ func TestDeclaredCharsetWins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := Extract(bytes.NewReader(body), "text/plain; charset=cp1252", "a.txt", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(body), MIME: "text/plain; charset=cp1252", Filename: "a.txt", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}

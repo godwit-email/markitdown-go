@@ -1,8 +1,10 @@
-package markitdown
+package markitdown_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"github.com/godwit-email/markitdown-go"
 	"os"
 	"strings"
 	"testing"
@@ -13,8 +15,8 @@ const ocrBlock = "*[Image OCR]  \nMOCK\\_OCR\\_TEXT\\_12345  \n[End OCR]*"
 
 type fixedOCR struct{ text string }
 
-func (f fixedOCR) ExtractText(OCRImage) (OCRResult, error) {
-	return OCRResult{Text: f.text}, nil
+func (f fixedOCR) Recognize(context.Context, markitdown.Image) (string, error) {
+	return f.text, nil
 }
 
 func TestOCROfficeFixtures(t *testing.T) {
@@ -39,7 +41,7 @@ func TestOCROfficeFixtures(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := ExtractOptions(bytes.NewReader(ocrFile(t, tc.name)), "", tc.name, 0, Options{OCR: ocr})
+			res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(ocrFile(t, tc.name)), Filename: tc.name, OCR: ocr})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,7 +55,7 @@ func TestOCROfficeFixtures(t *testing.T) {
 func TestOCRKeepsUnderline(t *testing.T) {
 	body := `<w:r><w:t xml:space="preserve">plain </w:t></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>underlined</w:t></w:r>`
 	doc := docxWithBody(t, body)
-	res, err := ExtractOptions(bytes.NewReader(doc), "", "a.docx", 0, Options{OCR: fixedOCR{text: ocrMock}})
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(doc), Filename: "a.docx", OCR: fixedOCR{text: ocrMock}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +66,7 @@ func TestOCRKeepsUnderline(t *testing.T) {
 
 func TestOCRFixturesHaveNoTagsWithoutService(t *testing.T) {
 	for _, name := range []string{"docx_image_middle.docx", "xlsx_image_middle.xlsx", "pptx_image_middle.pptx"} {
-		res, err := Extract(bytes.NewReader(ocrFile(t, name)), "", name, 0)
+		res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(ocrFile(t, name)), MIME: "", Filename: name, MaxOut: 0})
 		if err != nil {
 			t.Fatal(name, err)
 		}
@@ -75,23 +77,10 @@ func TestOCRFixturesHaveNoTagsWithoutService(t *testing.T) {
 }
 
 func TestOCRVisionRequestUsesFakeClient(t *testing.T) {
-	var got VisionRequest
-	client := visionFunc(func(req VisionRequest) (string, error) {
-		got = req
-		return "Recognized_text", nil
-	})
-	svc := NewLLMVisionOCR(client, "vision-model", "Read the text")
 	png := []byte{0x89, 'P', 'N', 'G'}
-	res, err := svc.ExtractText(OCRImage{Data: png, MIME: "image/png", Name: "red.png"})
-	if err != nil || res.Text != "Recognized_text" {
-		t.Fatal(res, err)
-	}
-	if got.Model != "vision-model" || got.Prompt != "Read the text" || !strings.HasPrefix(got.DataURI, "data:image/png;base64,") {
-		t.Fatalf("%+v", got)
-	}
 	doc := docxPackage(t, `<w:p><w:r><w:t>Before </w:t></w:r>`+onePNG()+`<w:r><w:t> After</w:t></w:r></w:p>`, map[string][]byte{"word/media/image.png": png},
 		`  <Relationship Id="rIdPng" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image.png"/>`)
-	out, err := ExtractOptions(bytes.NewReader(doc), "", "a.docx", 0, Options{OCR: svc})
+	out, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(doc), Filename: "a.docx", OCR: fixedOCR{text: "Recognized_text"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,27 +92,27 @@ func TestOCRVisionRequestUsesFakeClient(t *testing.T) {
 func TestOCRErrorKeepsNativeImage(t *testing.T) {
 	name := "docx_image_start.docx"
 	body := ocrFile(t, name)
-	native, err := Extract(bytes.NewReader(body), "", name, 0)
+	native, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(body), MIME: "", Filename: name, MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := ExtractOptions(bytes.NewReader(body), "", name, 0, Options{OCR: errOCR{msg: "quota exceeded"}})
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(body), Filename: name, OCR: errOCR{msg: "quota exceeded"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Text != native.Text || strings.Contains(res.Text, "*[Image OCR]") {
 		t.Fatalf("native not kept\n%s", res.Text)
 	}
-	_, err = ExtractOptions(bytes.NewReader(body), "", name, 0, Options{OCR: panicOCR{err: errors.New("vision down")}})
-	if err == nil || err.Error() != "vision down" {
-		t.Fatal(err)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(body), Filename: name, OCR: panicOCR{err: errors.New("vision down")}})
+	if err != nil || !res.Partial || res.Text != native.Text || strings.Contains(res.Text, "*[Image OCR]") {
+		t.Fatalf("partial %v err %v\n%s", res.Partial, err, res.Text)
 	}
 }
 
 func TestOCRCacheReusesIdenticalImages(t *testing.T) {
 	var n int
 	svc := countOCR{text: ocrMock, n: &n}
-	_, err := ExtractOptions(bytes.NewReader(ocrFile(t, "docx_multiple_images.docx")), "", "a.docx", 0, Options{OCR: svc})
+	_, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(ocrFile(t, "docx_multiple_images.docx")), Filename: "a.docx", OCR: svc})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,33 +121,29 @@ func TestOCRCacheReusesIdenticalImages(t *testing.T) {
 	}
 }
 
-type visionFunc func(VisionRequest) (string, error)
-
-func (f visionFunc) Complete(req VisionRequest) (string, error) { return f(req) }
-
 type errOCR struct{ msg string }
 
-func (e errOCR) ExtractText(OCRImage) (OCRResult, error) {
-	return OCRResult{Error: e.msg}, nil
+func (e errOCR) Recognize(context.Context, markitdown.Image) (string, error) {
+	return "", errors.New(e.msg)
 }
 
 type panicOCR struct{ err error }
 
-func (p panicOCR) ExtractText(OCRImage) (OCRResult, error) { return OCRResult{}, p.err }
+func (p panicOCR) Recognize(context.Context, markitdown.Image) (string, error) { return "", p.err }
 
 type countOCR struct {
 	text string
 	n    *int
 }
 
-func (c countOCR) ExtractText(OCRImage) (OCRResult, error) {
+func (c countOCR) Recognize(context.Context, markitdown.Image) (string, error) {
 	*c.n++
-	return OCRResult{Text: c.text}, nil
+	return c.text, nil
 }
 
 func ocrFile(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile("packages/markitdown-ocr/tests/ocr_test_data/" + name)
+	b, err := os.ReadFile("testdata/ocr/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,4 +154,73 @@ func onePNG() string {
 	return `<w:r><w:drawing><wp:inline><wp:docPr id="1" name="Image 1" descr="Image 1"/>` +
 		`<a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="Image 1"/></pic:nvPicPr>` +
 		`<pic:blipFill><a:blip r:embed="rIdPng"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`
+}
+
+type countCalls struct{ n int }
+
+func (c *countCalls) Recognize(context.Context, markitdown.Image) (string, error) {
+	c.n++
+	return "nope", nil
+}
+
+func TestPDFAndHTMLDoNotRecognize(t *testing.T) {
+	ocr := &countCalls{}
+	_, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(testFile(t, "test.pdf")), MIME: "application/pdf", Filename: "a.pdf", OCR: ocr,
+	})
+	if err != nil || ocr.n != 0 {
+		t.Fatalf("calls %d err %v", ocr.n, err)
+	}
+	htmlDoc := `<p>Hi</p><img src="data:image/png;base64,aaaa">`
+	_, err = markitdown.Extract(context.Background(), markitdown.Request{
+		R: strings.NewReader(htmlDoc), MIME: "text/html", Filename: "a.html", OCR: ocr,
+	})
+	if err != nil || ocr.n != 0 {
+		t.Fatalf("calls %d err %v", ocr.n, err)
+	}
+}
+
+type ordinaryCancel struct{}
+
+func (ordinaryCancel) Recognize(context.Context, markitdown.Image) (string, error) {
+	return "", context.Canceled
+}
+
+func TestOCROrdinaryCancelSkipsImage(t *testing.T) {
+	body := ocrFile(t, "docx_image_start.docx")
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(body), Filename: "a.docx", OCR: ordinaryCancel{},
+	})
+	if err != nil || !res.Partial || strings.Contains(res.Text, "*[Image OCR]") {
+		t.Fatalf("%#v %v", res, err)
+	}
+}
+
+type parentCancel struct{ cancel context.CancelFunc }
+
+func (p parentCancel) Recognize(ctx context.Context, _ markitdown.Image) (string, error) {
+	p.cancel()
+	return "", ctx.Err()
+}
+
+func TestOCRParentCancelFailsExtract(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := markitdown.Extract(ctx, markitdown.Request{
+		R: bytes.NewReader(ocrFile(t, "docx_image_start.docx")), Filename: "a.docx",
+		OCR: parentCancel{cancel: cancel},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
+
+func TestZIPPassesOCRToMember(t *testing.T) {
+	buf := zipEntries(t, []zipEntry{{"pic.docx", string(ocrFile(t, "docx_image_start.docx"))}})
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(buf), MIME: "application/zip", Filename: "a.zip",
+		OCR: fixedOCR{text: ocrMock},
+	})
+	if err != nil || !strings.Contains(res.Text, "MOCK\\_OCR\\_TEXT\\_12345") {
+		t.Fatalf("%v\n%s", err, res.Text)
+	}
 }

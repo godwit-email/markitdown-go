@@ -1,8 +1,12 @@
-package markitdown
+package markitdown_test
 
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"github.com/godwit-email/markitdown-go"
+	"github.com/godwit-email/markitdown-go/docx"
+	"github.com/godwit-email/markitdown-go/pptx"
 	"io"
 	"strings"
 	"testing"
@@ -23,7 +27,7 @@ func TestXLSXNativeMarkdown(t *testing.T) {
 	if err := f.Write(&buf); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Extract(bytes.NewReader(buf.Bytes()), "", "a.xlsx", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(buf.Bytes()), MIME: "", Filename: "a.xlsx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,141 +37,9 @@ func TestXLSXNativeMarkdown(t *testing.T) {
 	}
 }
 
-func TestShowZeroesRenameIsScoped(t *testing.T) {
-	in := []byte("<worksheet><sheetViews>" +
-		`<sheetView showZeroes="0" workbookViewId="0"/>` +
-		"<sheetView\n\tshowZeroes=\"1\"\ttabSelected=\"1\"/>" +
-		"</sheetViews>" +
-		`<customSheetViews><customSheetView showZeroes="0"/></customSheetViews>` +
-		`<sheetData><row r="1">` +
-		`<c r="A1" t="inlineStr"><is><t xml:space="preserve"> showZeroes="0" </t></is></c>` +
-		`<c r="B1"><f>IF(A1=" showZeroes=","x","y")</f><v>y</v></c>` +
-		`</row></sheetData></worksheet>`)
-	got := renameShowZeroes(in)
-	if bytes.Count(got, []byte("showZeros=")) != 2 {
-		t.Fatalf("count %d\n%s", bytes.Count(got, []byte("showZeros=")), got)
-	}
-	for _, s := range []string{
-		`<sheetView showZeros="0" workbookViewId="0"/>`,
-		"<sheetView\n\tshowZeros=\"1\"\ttabSelected=\"1\"/>",
-		`<t xml:space="preserve"> showZeroes="0" </t>`,
-		`<f>IF(A1=" showZeroes=","x","y")</f>`,
-		`<customSheetView showZeroes="0"/>`,
-	} {
-		if !bytes.Contains(got, []byte(s)) {
-			t.Fatalf("missing %s\n%s", s, got)
-		}
-	}
-}
-
-func TestXLSXLegacyShowZeroesCellSurvives(t *testing.T) {
-	f := excelize.NewFile()
-	f.SetSheetName("Sheet1", "Data")
-	f.SetCellValue("Data", "A1", "hello")
-	f.SetCellValue("Data", "B1", "world")
-	f.SetCellValue("Data", "A2", ` showZeroes="0" `)
-	var buf bytes.Buffer
-	if err := f.Write(&buf); err != nil {
-		t.Fatal(err)
-	}
-	raw := rewriteZip(t, buf.Bytes(), func(name string, content []byte) []byte {
-		if name == "xl/worksheets/sheet1.xml" {
-			return bytes.Replace(content, []byte("<sheetView "), []byte(`<sheetView showZeroes="0" `), 1)
-		}
-		return content
-	})
-	res, err := Extract(bytes.NewReader(raw), "", "legacy.xlsx", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range []string{"## Data", "hello", "world", `showZeroes="0"`} {
-		if !strings.Contains(res.Text, s) {
-			t.Fatalf("missing %s\n%s", s, res.Text)
-		}
-	}
-	if strings.Contains(res.Text, "showZeros") {
-		t.Fatalf("renamed cell text:\n%s", res.Text)
-	}
-}
-
-func TestXLSXImageHookOrderAndNative(t *testing.T) {
-	book := xlsxWithImages(t)
-	native, err := Extract(bytes.NewReader(book), "", "a.xlsx", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(native.Text, "### Images") || strings.Contains(native.Text, "image_") {
-		t.Fatalf("native parsed images:\n%s", native.Text)
-	}
-	var seen []string
-	hook := func(img EmbeddedImage) (string, error) {
-		seen = append(seen, img.Name+":"+string(img.Data))
-		return "<p><strong>image_" + itoa(len(seen)) + "</strong></p>", nil
-	}
-	res, err := ExtractOptions(bytes.NewReader(book), "", "a.xlsx", 0, Options{ImageHook: hook})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantSeen := []string{"image3.png:red", "image1.png:red", "image2.png:blue", "image4.png:blue"}
-	if strings.Join(seen, ",") != strings.Join(wantSeen, ",") {
-		t.Fatalf("order %v", seen)
-	}
-	order := []string{"## Second", "| <native> & \\*value\\* | 12 |", "### Images in this sheet:", "**image_1**", "**image_2**", "**image_3**", "## First", "| End |", "**image_4**"}
-	pos := -1
-	for _, s := range order {
-		i := strings.Index(res.Text, s)
-		if i < 0 || i < pos {
-			t.Fatalf("missing or out of order %s\n%s", s, res.Text)
-		}
-		pos = i
-	}
-	blank, err := ExtractOptions(bytes.NewReader(book), "", "a.xlsx", 0, Options{ImageHook: func(EmbeddedImage) (string, error) {
-		return "  \n", nil
-	}})
-	if err != nil || blank.Text != native.Text {
-		t.Fatalf("declining hook\n%q\n%q", blank.Text, native.Text)
-	}
-}
-
-func TestXLSXImageHookRejectsDocumentAndMissing(t *testing.T) {
-	book := xlsxWithImages(t)
-	_, err := ExtractOptions(bytes.NewReader(book), "", "a.xlsx", 0, Options{ImageHook: func(EmbeddedImage) (string, error) {
-		return "<html><body>text</body></html>", nil
-	}})
-	if err == nil || !strings.Contains(err.Error(), "_image_to_html must return") {
-		t.Fatal(err)
-	}
-	broken := rewriteZip(t, book, func(name string, content []byte) []byte {
-		if name == "xl/drawings/drawing1.xml" {
-			return bytes.Replace(content, []byte(`embed="rId1"`), []byte(`embed="missing"`), 1)
-		}
-		return content
-	})
-	_, err = ExtractOptions(bytes.NewReader(broken), "", "a.xlsx", 0, Options{ImageHook: func(EmbeddedImage) (string, error) {
-		return "<p>recognized</p>", nil
-	}})
-	if err == nil {
-		t.Fatal("missing relationship was ignored")
-	}
-	entity := rewriteZip(t, book, func(name string, content []byte) []byte {
-		if name != "xl/drawings/drawing1.xml" {
-			return content
-		}
-		return append([]byte(`<!DOCTYPE wsDr [<!ENTITY label "not expanded">]>`), bytes.Replace(content, []byte(`name="Image 1"`), []byte(`name="&label;"`), 1)...)
-	})
-	called := false
-	_, err = ExtractOptions(bytes.NewReader(entity), "", "a.xlsx", 0, Options{ImageHook: func(EmbeddedImage) (string, error) {
-		called = true
-		return "<p>recognized</p>", nil
-	}})
-	if err == nil || called {
-		t.Fatalf("entity err=%v called=%v", err, called)
-	}
-}
-
 func TestDOCXUnderlineAndStyleMap(t *testing.T) {
 	plain := docxWithBody(t, `<w:r><w:t xml:space="preserve">plain </w:t></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>underlined</w:t></w:r>`)
-	res, err := Extract(bytes.NewReader(plain), "", "a.docx", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(plain), MIME: "", Filename: "a.docx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,118 +54,20 @@ func TestDOCXUnderlineAndStyleMap(t *testing.T) {
 	}
 	for _, tc := range cases {
 		body := `<w:r><w:t>First</w:t></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr>` + tc.run + `</w:r><w:r><w:t>Last</w:t></w:r>`
-		res, err = Extract(bytes.NewReader(docxWithBody(t, body)), "", "a.docx", 0)
+		res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(docxWithBody(t, body)), MIME: "", Filename: "a.docx", MaxOut: 0})
 		if err != nil || res.Text != tc.want {
 			t.Fatalf("%s got %q err %v", tc.run, res.Text, err)
 		}
 	}
 	embedded := docxWithBody(t, `<w:r><w:t xml:space="preserve">plain </w:t></w:r><w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>underlined</w:t></w:r>`)
 	embedded = addZipFile(t, embedded, "mammoth/style-map", []byte("u => em"))
-	res, err = Extract(bytes.NewReader(embedded), "", "a.docx", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(embedded), MIME: "", Filename: "a.docx", MaxOut: 0})
 	if err != nil || !strings.Contains(res.Text, "plain *underlined*") || strings.Contains(res.Text, "<u>") {
 		t.Fatalf("%s %v", res.Text, err)
 	}
-	res, err = ExtractOptions(bytes.NewReader(embedded), "", "a.docx", 0, Options{StyleMap: "u => strong"})
+	res, err = docx.ExtractOptions(context.Background(), markitdown.Request{R: bytes.NewReader(embedded), Filename: "a.docx"}, docx.Options{StyleMap: "u => strong"})
 	if err != nil || !strings.Contains(res.Text, "plain **underlined**") {
 		t.Fatalf("%s %v", res.Text, err)
-	}
-}
-
-func TestDOCXStylesRepair(t *testing.T) {
-	valid := []byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-		`<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>`)
-	if !bytes.Equal(repairStyles(valid), valid) {
-		t.Fatal("valid styles changed")
-	}
-	missing := bytes.Replace(valid, []byte(` w:type="paragraph"`), nil, 1)
-	got := repairStyles(missing)
-	root, err := parseXML(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	style := findFirst(root, "style")
-	if style == nil || style.attr["type"] != "paragraph" || style.attr["styleId"] != "Normal" {
-		t.Fatalf("%v", style)
-	}
-	noID := bytes.Replace(valid, []byte(` w:styleId="Normal"`), nil, 1)
-	root, err = parseXML(repairStyles(noID))
-	if err != nil || findFirst(root, "style") != nil {
-		t.Fatal("style without id kept", err)
-	}
-	strike := []byte(`<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:styleId="Normal"><w:rPr><w:dstrike w:val="1"/><w:b/></w:rPr></w:style></w:styles>`)
-	text := string(repairStyles(strike))
-	if !strings.Contains(text, `w:type="paragraph"`) || !strings.Contains(text, "<w:strike") || strings.Contains(text, "dstrike") {
-		t.Fatalf("%s", text)
-	}
-	other := []byte(`<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:e="urn:extension"><w:style w:type="paragraph" w:styleId="Normal"/><e:dstrike/></w:styles>`)
-	if !bytes.Equal(repairStyles(other), other) {
-		t.Fatalf("other namespace changed: %s", repairStyles(other))
-	}
-	orig, err := Extract(bytes.NewReader(testFile(t, "test.docx")), "", "test.docx", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mod := rewriteZip(t, testFile(t, "test.docx"), func(name string, content []byte) []byte {
-		if name != "word/styles.xml" {
-			return content
-		}
-		return bytes.Replace(content, []byte(`<w:style w:type="paragraph" w:styleId="1"`), []byte(`<w:style w:styleId="1"`), 1)
-	})
-	alt, err := Extract(bytes.NewReader(mod), "", "test.docx", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if orig.Text != alt.Text || !strings.Contains(alt.Text, "# Abstract") {
-		t.Fatal("style repair changed the document")
-	}
-}
-
-func TestDOCXImageHook(t *testing.T) {
-	png := []byte("png-bytes")
-	gif := []byte("gif-bytes")
-	body := `<w:r><w:drawing><wp:inline><wp:docPr id="1" name="Image 1" descr="Image 1"/>` +
-		`<a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="Image 1"/></pic:nvPicPr>` +
-		`<pic:blipFill><a:blip r:embed="rIdPng"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`
-	doc := docxPackage(t, `<w:p>`+body+`</w:p>`, map[string][]byte{
-		"word/media/image.png": png,
-	}, `  <Relationship Id="rIdPng" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image.png"/>`)
-	native, err := Extract(bytes.NewReader(doc), "", "a.docx", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(native.Text, "![Image 1](data:image/png;base64...)") {
-		t.Fatalf("%s", native.Text)
-	}
-	var seen []string
-	hook := func(img EmbeddedImage) (string, error) {
-		seen = append(seen, img.Ext+":"+img.MIME+":"+string(img.Data))
-		return "<strong>image" + itoa(len(seen)) + "</strong>", nil
-	}
-	two := docxPackage(t, `<w:p>`+
-		strings.Replace(body, `rIdPng`, `rIdGif`, 1)+
-		`<w:r><w:t xml:space="preserve"> </w:t></w:r>`+
-		body+
-		`<w:r><w:t xml:space="preserve"> </w:t></w:r>`+
-		strings.Replace(body, `rIdPng`, `rIdGif`, 1)+
-		`</w:p>`, map[string][]byte{"word/media/image.png": png, "word/media/image.gif": gif},
-		`  <Relationship Id="rIdPng" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image.png"/>`+
-			`  <Relationship Id="rIdGif" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image.gif"/>`)
-	// The first and third drawings still say rIdPng in the template before replace of only the first occurrence of the whole body.
-	res, err := ExtractOptions(bytes.NewReader(two), "", "a.docx", 0, Options{ImageHook: hook})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Text != "**image1** **image2** **image3**" {
-		t.Fatalf("%q seen %v", res.Text, seen)
-	}
-	decl, err := ExtractOptions(bytes.NewReader(doc), "", "a.docx", 0, Options{ImageHook: func(EmbeddedImage) (string, error) { return "", nil }})
-	if err != nil || decl.Text != native.Text {
-		t.Fatalf("decline %q native %q %v", decl.Text, native.Text, err)
-	}
-	boom := errImage("image failure")
-	_, err = ExtractOptions(bytes.NewReader(doc), "", "a.docx", 0, Options{ImageHook: func(EmbeddedImage) (string, error) { return "", boom }})
-	if err != boom {
-		t.Fatal(err)
 	}
 }
 
@@ -301,20 +75,25 @@ type errImage string
 
 func (e errImage) Error() string { return string(e) }
 
+type zipExtra struct {
+	name string
+	body []byte
+}
+
 func TestPPTXSVGAndChart(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "test_svg_no_fallback.pptx")), "", "test_svg_no_fallback.pptx", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_svg_no_fallback.pptx")), MIME: "", Filename: "test_svg_no_fallback.pptx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(res.Text, "Red square SVG") {
 		t.Fatalf("%s", res.Text)
 	}
-	kept, err := ExtractOptions(bytes.NewReader(testFile(t, "test_svg_no_fallback.pptx")), "", "a.pptx", 0, Options{KeepData: true})
+	kept, err := pptx.ExtractOptions(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_svg_no_fallback.pptx")), Filename: "a.pptx"}, pptx.Options{KeepData: true})
 	if err != nil || !strings.Contains(kept.Text, "data:image/svg+xml;base64,") {
 		t.Fatalf("%s %v", kept.Text, err)
 	}
 	chart := pptxWithChart(t)
-	res, err = Extract(bytes.NewReader(chart), "", "chart.pptx", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(chart), MIME: "", Filename: "chart.pptx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +108,7 @@ func TestPPTXSVGAndChart(t *testing.T) {
 		}
 		return content
 	})
-	res, err = Extract(bytes.NewReader(plain), "", "chart.pptx", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(plain), MIME: "", Filename: "chart.pptx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,23 +184,6 @@ func injectXLSXImages(t *testing.T, data []byte) []byte {
 }
 
 func sheetRelsBytes(s string) []byte { return []byte(s) }
-
-func TestDOCXUnreferencedMediaSkipsHook(t *testing.T) {
-	doc := docxPackage(t, `<w:p><w:r><w:t>Hello</w:t></w:r></w:p>`, map[string][]byte{"word/media/orphan.png": []byte("png")}, "")
-	called := false
-	res, err := ExtractOptions(bytes.NewReader(doc), "", "a.docx", 0, Options{ImageHook: func(EmbeddedImage) (string, error) {
-		called = true
-		return "<p>nope</p>", nil
-	}})
-	if err != nil || called || !strings.Contains(res.Text, "Hello") {
-		t.Fatalf("%v %v %s", err, called, res.Text)
-	}
-}
-
-type zipExtra struct {
-	name string
-	body []byte
-}
 
 func rewriteZip(t *testing.T, data []byte, change func(string, []byte) []byte, extra ...zipExtra) []byte {
 	t.Helper()

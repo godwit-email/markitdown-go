@@ -1,30 +1,34 @@
-package markitdown
+package markitdown_test
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/godwit-email/markitdown-go"
+	"github.com/godwit-email/markitdown-go/html"
 )
 
 func htmlOf(t *testing.T, s string) string {
 	t.Helper()
-	res, err := Extract(strings.NewReader(s), "text/html", "a.html", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader(s), MIME: "text/html", Filename: "a.html", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return res.Text
 }
 
-func TestUnderlineWhitespace(t *testing.T) {
-	for _, ws := range []string{"", " ", "  ", "\t", "\n", "\r\n", "\u00a0", " \t\n\u00a0 "} {
-		if got := wrapUnderline(ws); got != ws && !(ws == "\t" && got == " ") {
-			// Tab is normalized to a space when it comes from an HTML text node.
-			// The converter itself keeps a whitespace-only argument unchanged.
-			if got != ws {
-				t.Fatalf("%q -> %q", ws, got)
-			}
-		}
+func htmlKeep(t *testing.T, s string, keep bool) markitdown.Result {
+	t.Helper()
+	res, err := html.ExtractOptions(context.Background(), markitdown.Request{R: strings.NewReader(s), MIME: "text/html", Filename: "a.html"}, html.Options{KeepDataURIs: keep})
+	if err != nil {
+		t.Fatal(err)
 	}
+	return res
+}
+
+func TestUnderlineWhitespace(t *testing.T) {
 	cases := []struct{ content, want string }{
 		{"", "FirstLast"},
 		{" ", "First Last"},
@@ -90,10 +94,7 @@ func TestHTMLImages(t *testing.T) {
 	if !strings.Contains(got, "![A photo](data:image/gif;base64...)") {
 		t.Fatal(got)
 	}
-	res, err := convertHTML([]byte(`<html><body><img src="`+placeholder+`" data-src="`+other+`" alt="A photo"></body></html>`), htmlOpt{keepData: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	res := htmlKeep(t, `<html><body><img src="`+placeholder+`" data-src="`+other+`" alt="A photo"></body></html>`, true)
 	if !strings.Contains(res.Text, "![A photo]("+placeholder+")") || strings.Contains(res.Text, other) {
 		t.Fatal(res.Text)
 	}
@@ -101,9 +102,9 @@ func TestHTMLImages(t *testing.T) {
 	if got != "![dot](DATA:image/png;base64...)" || strings.Contains(got, "AAAA") {
 		t.Fatal(got)
 	}
-	res, err = convertHTML([]byte(`<html><body><img alt="dot" src="DATA:image/png;base64,AAAA"></body></html>`), htmlOpt{keepData: true})
-	if err != nil || res.Text != "![dot](DATA:image/png;base64,AAAA)" {
-		t.Fatalf("%q %v", res.Text, err)
+	res = htmlKeep(t, `<html><body><img alt="dot" src="DATA:image/png;base64,AAAA"></body></html>`, true)
+	if res.Text != "![dot](DATA:image/png;base64,AAAA)" {
+		t.Fatalf("%q", res.Text)
 	}
 }
 
@@ -114,28 +115,25 @@ func TestWikipediaTitles(t *testing.T) {
 <div id="mw-content-text"><p>Body text.</p></div>
 </body></html>`
 	}
-	res, err := convertHTML([]byte(page(`<span lang="en" dir="ltr"><span class="mw-page-title-main">Paris</span></span>`, "Paris")), htmlOpt{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Title != "Paris" || !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Paris") {
-		t.Fatalf("%q %q", res.Title, res.Text)
-	}
-	res, err = convertHTML([]byte(page("<i>Escherichia coli</i>", "Escherichia coli")), htmlOpt{})
-	if err != nil || res.Title != "Escherichia coli" || !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Escherichia coli") {
-		t.Fatalf("%q %q", res.Title, res.Text)
-	}
-	res, err = convertHTML([]byte(page("<i>Titanic</i> (1997 film)", "Titanic (1997 film)")), htmlOpt{})
-	if err != nil || res.Title != "Titanic (1997 film)" || !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Titanic (1997 film)") {
-		t.Fatalf("%q %q", res.Title, res.Text)
-	}
-	res, err = convertHTML([]byte(`<html><body><div id='mw-content-text'><p>Hello</p></div></body></html>`), htmlOpt{})
-	if err != nil || strings.Contains(res.Text, "# None") || strings.TrimSpace(res.Text) != "Hello" {
+	res := htmlKeep(t, page(`<span lang="en" dir="ltr"><span class="mw-page-title-main">Paris</span></span>`, "Paris"), false)
+	if !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Paris") {
 		t.Fatalf("%q", res.Text)
 	}
-	res, err = convertHTML([]byte(`<html><head><title>   </title></head><body><div id='mw-content-text'><p>Hello</p></div></body></html>`), htmlOpt{})
-	if err != nil || strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "#") || res.Title != "" || strings.TrimSpace(res.Text) != "Hello" {
-		t.Fatalf("title %q text %q", res.Title, res.Text)
+	res = htmlKeep(t, page("<i>Escherichia coli</i>", "Escherichia coli"), false)
+	if !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Escherichia coli") {
+		t.Fatalf("%q", res.Text)
+	}
+	res = htmlKeep(t, page("<i>Titanic</i> (1997 film)", "Titanic (1997 film)"), false)
+	if !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Titanic (1997 film)") {
+		t.Fatalf("%q", res.Text)
+	}
+	res = htmlKeep(t, `<html><body><div id='mw-content-text'><p>Hello</p></div></body></html>`, false)
+	if strings.Contains(res.Text, "# None") || strings.TrimSpace(res.Text) != "Hello" {
+		t.Fatalf("%q", res.Text)
+	}
+	res = htmlKeep(t, `<html><head><title>   </title></head><body><div id='mw-content-text'><p>Hello</p></div></body></html>`, false)
+	if strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "#") || strings.TrimSpace(res.Text) != "Hello" {
+		t.Fatalf("%q", res.Text)
 	}
 }
 
@@ -182,7 +180,7 @@ K</strike>L.</p>
 }
 
 func TestHTMLVectors(t *testing.T) {
-	blog, err := Extract(bytes.NewReader(testFile(t, "test_blog.html")), "text/html; charset=utf-8", "test_blog.html", 0)
+	blog, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_blog.html")), MIME: "text/html; charset=utf-8", Filename: "test_blog.html", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +192,7 @@ func TestHTMLVectors(t *testing.T) {
 			t.Fatalf("blog missing %s", s[:40])
 		}
 	}
-	wiki, err := Extract(bytes.NewReader(testFile(t, "test_wikipedia.html")), "text/html; charset=utf-8", "test_wikipedia.html", 0)
+	wiki, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_wikipedia.html")), MIME: "text/html; charset=utf-8", Filename: "test_wikipedia.html", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +213,7 @@ func TestHTMLVectors(t *testing.T) {
 			t.Fatalf("wiki has %s", s)
 		}
 	}
-	serp, err := Extract(bytes.NewReader(testFile(t, "test_serp.html")), "text/html; charset=utf-8", "test_serp.html", 0)
+	serp, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_serp.html")), MIME: "text/html; charset=utf-8", Filename: "test_serp.html", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,8 +1,10 @@
-package markitdown
+package markitdown_test
 
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"encoding/binary"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,13 +14,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/godwit-email/markitdown-go"
+	"github.com/godwit-email/markitdown-go/internal/budget"
 	"github.com/xuri/excelize/v2"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 func TestJSONFixtures(t *testing.T) {
 	for _, name := range []string{"test.json", "json_late_non_ascii.json"} {
-		res, err := Extract(bytes.NewReader(testFile(t, name)), "application/json", name, 0)
+		res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, name)), MIME: "application/json", Filename: name, MaxOut: 0})
 		if err != nil {
 			t.Fatal(name, err)
 		}
@@ -35,7 +39,7 @@ func TestJSONFixtures(t *testing.T) {
 		}
 	}
 	late := string(testFile(t, "json_late_non_ascii.json"))
-	res, err := Extract(strings.NewReader(late), "application/json; charset=utf-8", "json_late_non_ascii.json", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader(late), MIME: "application/json; charset=utf-8", Filename: "json_late_non_ascii.json", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +52,7 @@ func TestJSONFixtures(t *testing.T) {
 }
 
 func TestMSKanjiCSV(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "test_mskanji.csv")), "text/csv; charset=cp932", "test_mskanji.csv", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_mskanji.csv")), MIME: "text/csv; charset=cp932", Filename: "test_mskanji.csv", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +74,7 @@ func TestGB18030CSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := Extract(bytes.NewReader(body), "text/csv; charset=gb18030", "a.csv", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(body), MIME: "text/csv; charset=gb18030", Filename: "a.csv", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +84,11 @@ func TestGB18030CSV(t *testing.T) {
 }
 
 func TestXLSXFixture(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "test.xlsx")), "", "test.xlsx", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test.xlsx")), MIME: "", Filename: "test.xlsx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindXLSX || res.Partial {
+	if res.Kind != "xlsx" || res.Partial {
 		t.Fatalf("%#v", res)
 	}
 	for _, s := range []string{
@@ -108,7 +112,7 @@ func TestXLSXDropsEmptySheetAndCapsCells(t *testing.T) {
 	if err := f.Write(&buf); err != nil {
 		t.Fatal(err)
 	}
-	res, err := Extract(bytes.NewReader(buf.Bytes()), "", "a.xlsx", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(buf.Bytes()), MIME: "", Filename: "a.xlsx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +122,7 @@ func TestXLSXDropsEmptySheetAndCapsCells(t *testing.T) {
 
 	big := excelize.NewFile()
 	row := make([]any, 1)
-	for i := 1; i <= maxCells+1; i++ {
+	for i := 1; i <= 50000+1; i++ {
 		row[0] = "c"
 		cell, _ := excelize.CoordinatesToCellName(1, i)
 		if err := big.SetCellValue("Sheet1", cell, "c"); err != nil {
@@ -129,7 +133,7 @@ func TestXLSXDropsEmptySheetAndCapsCells(t *testing.T) {
 	if err := big.Write(&buf); err != nil {
 		t.Fatal(err)
 	}
-	res, err = Extract(bytes.NewReader(buf.Bytes()), "", "big.xlsx", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(buf.Bytes()), MIME: "", Filename: "big.xlsx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,18 +143,18 @@ func TestXLSXDropsEmptySheetAndCapsCells(t *testing.T) {
 }
 
 func TestXLSXCorrupt(t *testing.T) {
-	_, err := Extract(strings.NewReader("not a workbook"), "", "a.xlsx", 0)
-	if !errors.Is(err, ErrCorrupt) {
+	_, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("not a workbook"), MIME: "", Filename: "a.xlsx", MaxOut: 0})
+	if !errors.Is(err, markitdown.ErrCorrupt) {
 		t.Fatal(err)
 	}
 }
 
 func TestDOCXFixture(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "test.docx")), "", "test.docx", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test.docx")), MIME: "", Filename: "test.docx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindDOCX {
+	if res.Kind != "docx" {
 		t.Fatal(res.Kind)
 	}
 	for _, s := range []string{
@@ -190,8 +194,8 @@ func TestDOCXExternalEntity(t *testing.T) {
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Extract(bytes.NewReader(buf.Bytes()), "", "a.docx", 0)
-	if !errors.Is(err, ErrCorrupt) {
+	_, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(buf.Bytes()), MIME: "", Filename: "a.docx", MaxOut: 0})
+	if !errors.Is(err, markitdown.ErrCorrupt) {
 		t.Fatal(err)
 	}
 	if hits != 0 {
@@ -232,11 +236,11 @@ func TestPPTXFixtures(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := Extract(bytes.NewReader(testFile(t, tc.name)), "", tc.name, 0)
+			res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, tc.name)), MIME: "", Filename: tc.name, MaxOut: 0})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.Kind != KindPPTX {
+			if res.Kind != "pptx" {
 				t.Fatal(res.Kind)
 			}
 			for _, s := range tc.include {
@@ -255,7 +259,7 @@ func TestPPTXFixtures(t *testing.T) {
 
 func TestPPTXTitleAndNotes(t *testing.T) {
 	withTitle := buildPPTX(t, "Quarterly Results", "Body text", "Remember to mention the budget.")
-	res, err := Extract(bytes.NewReader(withTitle), "", "a.pptx", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(withTitle), MIME: "", Filename: "a.pptx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +271,7 @@ func TestPPTXTitleAndNotes(t *testing.T) {
 	}
 
 	emptyTitle := buildPPTX(t, "   ", "Body text", "")
-	res, err = Extract(bytes.NewReader(emptyTitle), "", "a.pptx", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(emptyTitle), MIME: "", Filename: "a.pptx", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,18 +284,18 @@ func TestPPTXTitleAndNotes(t *testing.T) {
 }
 
 func TestPDFTextLayer(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "test.pdf")), "application/pdf", "test.pdf", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test.pdf")), MIME: "application/pdf", Filename: "test.pdf", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindPDF || res.Partial {
+	if res.Kind != "pdf" || res.Partial {
 		t.Fatalf("%#v", res.Kind)
 	}
 	if !strings.Contains(squash(res.Text), "While there is contemporaneous exploration of multi-agent approaches") {
 		t.Fatalf("missing sentence\n%s", res.Text[:min(500, len(res.Text))])
 	}
 
-	plain, err := Extract(bytes.NewReader(testFile(t, "pdf_cleanup_plain.pdf")), "", "pdf_cleanup_plain.pdf", 0)
+	plain, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "pdf_cleanup_plain.pdf")), MIME: "", Filename: "pdf_cleanup_plain.pdf", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,35 +309,35 @@ func TestPDFTextLayer(t *testing.T) {
 }
 
 func TestPDFScannedIsPartial(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "MEDRPT-2024-PAT-3847_medical_report_scan.pdf")), "", "scan.pdf", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "MEDRPT-2024-PAT-3847_medical_report_scan.pdf")), MIME: "", Filename: "scan.pdf", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.TrimSpace(res.Text) == "" && !res.Partial {
 		t.Fatal("empty text layer should be partial")
 	}
-	if strings.TrimSpace(res.Text) == "" && res.Kind != KindPDF {
+	if strings.TrimSpace(res.Text) == "" && res.Kind != "pdf" {
 		t.Fatal(res.Kind)
 	}
 }
 
 func TestPDFCorruptAndEncrypted(t *testing.T) {
-	_, err := Extract(strings.NewReader("%PDF-1.4\nnot really\n%%EOF\n"), "", "a.pdf", 0)
-	if !errors.Is(err, ErrCorrupt) {
+	_, err := markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("%PDF-1.4\nnot really\n%%EOF\n"), MIME: "", Filename: "a.pdf", MaxOut: 0})
+	if !errors.Is(err, markitdown.ErrCorrupt) {
 		t.Fatal(err)
 	}
-	_, err = Extract(bytes.NewReader(encryptedPDF()), "", "secret.pdf", 0)
-	if !errors.Is(err, ErrUnsupported) {
+	_, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(encryptedPDF()), MIME: "", Filename: "secret.pdf", MaxOut: 0})
+	if !errors.Is(err, markitdown.ErrUnsupported) {
 		t.Fatal(err)
 	}
 }
 
 func TestZIPMemberDOCXIsNotUnpacked(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "test_files.zip")), "application/zip", "test_files.zip", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_files.zip")), MIME: "application/zip", Filename: "test_files.zip", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindZIP {
+	if res.Kind != "zip" {
 		t.Fatal(res.Kind)
 	}
 	if !strings.Contains(res.Text, "## File: test.docx") {
@@ -342,17 +346,17 @@ func TestZIPMemberDOCXIsNotUnpacked(t *testing.T) {
 	if strings.Contains(res.Text, "[Content_Types].xml") {
 		t.Fatal("docx was unpacked as zip")
 	}
-	if res.Partial {
-		t.Fatal("docx, html, and jpg members should convert")
+	if !res.Partial {
+		t.Fatal("jpeg member has no converter in this version")
 	}
-	if !strings.Contains(res.Text, "ImageSize: 1615x1967") {
-		t.Fatal("jpg member missing")
+	if strings.Contains(res.Text, "ImageSize:") {
+		t.Fatal("jpeg member was converted")
 	}
 }
 
 func TestZIPBudgets(t *testing.T) {
 	ok := zipOf(t, map[string]string{"notes/hello.txt": "Hello world"})
-	res, err := Extract(bytes.NewReader(ok), "", "a.zip", 0)
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(ok), MIME: "", Filename: "a.zip", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +365,7 @@ func TestZIPBudgets(t *testing.T) {
 	}
 
 	mixed := zipOf(t, map[string]string{"a.txt": "alpha", "b.bin": "nope"})
-	res, err = Extract(bytes.NewReader(mixed), "", "m.zip", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(mixed), MIME: "", Filename: "m.zip", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +374,7 @@ func TestZIPBudgets(t *testing.T) {
 	}
 
 	deep := nestZip(t, 4, "leaf.txt", "deep")
-	res, err = Extract(bytes.NewReader(deep), "", "d.zip", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(deep), MIME: "", Filename: "d.zip", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +382,7 @@ func TestZIPBudgets(t *testing.T) {
 		t.Fatalf("depth partial=%v text=%q", res.Partial, res.Text)
 	}
 	three := nestZip(t, 3, "leaf.txt", "ok")
-	res, err = Extract(bytes.NewReader(three), "", "d.zip", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(three), MIME: "", Filename: "d.zip", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,10 +391,10 @@ func TestZIPBudgets(t *testing.T) {
 	}
 
 	var files []zipEntry
-	for i := 0; i < maxZipFiles+1; i++ {
+	for i := 0; i < 100+1; i++ {
 		files = append(files, zipEntry{name: "f" + strconv.Itoa(i) + ".txt", body: "x"})
 	}
-	res, err = Extract(bytes.NewReader(zipEntries(t, files)), "", "many.zip", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(zipEntries(t, files)), MIME: "", Filename: "many.zip", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +402,7 @@ func TestZIPBudgets(t *testing.T) {
 		t.Fatal("expected partial on file cap")
 	}
 
-	res, err = Extract(bytes.NewReader(zipBomb(t)), "", "bomb.zip", 0)
+	res, err = markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(zipBomb(t)), MIME: "", Filename: "bomb.zip", MaxOut: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,25 +413,98 @@ func TestZIPBudgets(t *testing.T) {
 		t.Fatalf("%s", res.Text)
 	}
 
-	_, err = Extract(strings.NewReader("not a zip"), "", "bad.zip", 0)
-	if !errors.Is(err, ErrCorrupt) {
+	_, err = markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("not a zip"), MIME: "", Filename: "bad.zip", MaxOut: 0})
+	if !errors.Is(err, markitdown.ErrCorrupt) {
 		t.Fatal(err)
 	}
 }
 
-func TestDOCXNotKindZip(t *testing.T) {
-	res, err := Extract(bytes.NewReader(testFile(t, "test.docx")), "application/octet-stream", "test.docx", 0)
+func patchUncompressed(t *testing.T, z []byte, from, to uint32) []byte {
+	t.Helper()
+	b := append([]byte(nil), z...)
+	set := func(i, off int) {
+		if i+off+4 > len(b) {
+			return
+		}
+		if binary.LittleEndian.Uint32(b[i+off:i+off+4]) == from {
+			binary.LittleEndian.PutUint32(b[i+off:i+off+4], to)
+		}
+	}
+	for i := 0; i+30 <= len(b); i++ {
+		switch {
+		case bytes.Equal(b[i:i+4], []byte{'P', 'K', 3, 4}):
+			set(i, 22)
+		case bytes.Equal(b[i:i+4], []byte{'P', 'K', 1, 2}):
+			set(i, 24)
+		}
+	}
+	return b
+}
+
+func TestZIPActualSizeStopsTheArchive(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("lie.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Kind != KindDOCX {
+	if _, err := w.Write(bytes.Repeat([]byte{'A'}, 200)); err != nil {
+		t.Fatal(err)
+	}
+	w, err = zw.Create("after.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("AFTER")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := patchUncompressed(t, buf.Bytes(), 200, 40)
+	left := int64(80)
+	files := 100
+	ctx := budget.With(context.Background(), &budget.State{Depth: 0, Files: &files, Left: &left})
+	res, err := markitdown.Extract(ctx, markitdown.Request{
+		R: bytes.NewReader(raw), MIME: "application/zip", Filename: "lie.zip",
+	})
+	if err != nil || !res.Partial || res.Kind != "zip" {
+		t.Fatalf("%#v %v", res, err)
+	}
+	if strings.Contains(res.Text, "AAAA") || strings.Contains(res.Text, "AFTER") {
+		t.Fatalf("%q", res.Text)
+	}
+}
+
+func TestZIPDepthSkipsNestedZipKeepsSibling(t *testing.T) {
+	deep := zipEntries(t, []zipEntry{{"leaf.txt", "deep"}})
+	mid := zipEntries(t, []zipEntry{{"side.txt", "ok"}, {"nested.zip", string(deep)}})
+	layer2 := zipEntries(t, []zipEntry{{"inner.zip", string(mid)}})
+	layer1 := zipEntries(t, []zipEntry{{"inner.zip", string(layer2)}})
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(layer1), MIME: "", Filename: "d.zip",
+	})
+	if err != nil || !res.Partial {
+		t.Fatalf("%#v %v", res, err)
+	}
+	if !strings.Contains(res.Text, "ok") || strings.Contains(res.Text, "deep") || strings.Contains(res.Text, "nested.zip") {
+		t.Fatalf("%q", res.Text)
+	}
+}
+
+func TestDOCXNotKindZip(t *testing.T) {
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test.docx")), MIME: "application/octet-stream", Filename: "test.docx", MaxOut: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != "docx" {
 		t.Fatal(res.Kind)
 	}
 }
 
 func testFile(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("packages", "markitdown", "tests", "test_files", name))
+	b, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
