@@ -11,6 +11,7 @@ import (
 	"github.com/godwit-email/markitdown-go/csv"
 	"github.com/godwit-email/markitdown-go/html"
 	"github.com/godwit-email/markitdown-go/text"
+	"github.com/godwit-email/markitdown-go/xlsx"
 )
 
 type parityCase struct {
@@ -76,6 +77,10 @@ func TestPythonParity(t *testing.T) {
 		{
 			name: "html/serp", mediaType: "text/html", filename: "test_serp.html",
 			charset: "utf-8", file: "test_serp.html", direct: html.Extract,
+		},
+		{
+			name: "xlsx/fixture", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			filename: "test.xlsx", file: "test.xlsx", direct: xlsx.Extract,
 		},
 	}
 	for _, tc := range cases {
