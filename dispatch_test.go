@@ -158,3 +158,20 @@ func TestDirectExtractWrongTypeIsCorrupt(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCharsetEdges(t *testing.T) {
+	ok := func(mime string, body []byte, want string) {
+		t.Helper()
+		res, err := markitdown.Extract(context.Background(), markitdown.Request{
+			R: bytes.NewReader(body), MIME: mime, Filename: "a.txt",
+		})
+		if err != nil || res.Text != want || res.Partial {
+			t.Fatalf("%s: %#v %v", mime, res, err)
+		}
+	}
+	ok("text/plain; charset=unicode", []byte("é"), "é")
+	ok("text/plain; charset=x-user-defined", []byte("é"), "é")
+	ok("text/plain", []byte{0xEF, 0xBB, 0xBF, 'A'}, "A")
+	ok("text/plain", []byte{'A', 0xFF, 'B'}, "A\uFFFD"+"B")
+	ok("application/json", []byte("{\"a\":1}"), "{\"a\":1}")
+}
