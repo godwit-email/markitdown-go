@@ -21,22 +21,24 @@ const (
 	maxZipFiles        = 100
 	maxZipUncompressed = 25 << 20
 
-	KindText    = "text"
-	KindCSV     = "csv"
-	KindXLSX    = "xlsx"
-	KindDOCX    = "docx"
-	KindPPTX    = "pptx"
-	KindPDF     = "pdf"
-	KindZIP     = "zip"
-	KindXLS     = "xls"
-	KindMSG     = "msg"
-	KindHTML    = "html"
-	KindRSS     = "rss"
-	KindEPUB    = "epub"
-	KindIPYNB   = "ipynb"
-	KindImage   = "image"
-	KindAudio   = "audio"
-	KindYouTube = "youtube"
+	KindText     = "text"
+	KindCSV      = "csv"
+	KindXLSX     = "xlsx"
+	KindDOCX     = "docx"
+	KindPPTX     = "pptx"
+	KindPDF      = "pdf"
+	KindZIP      = "zip"
+	KindXLS      = "xls"
+	KindMSG      = "msg"
+	KindHTML     = "html"
+	KindRSS      = "rss"
+	KindEPUB     = "epub"
+	KindIPYNB    = "ipynb"
+	KindImage    = "image"
+	KindAudio    = "audio"
+	KindYouTube  = "youtube"
+	KindDocIntel = "document-intelligence"
+	KindCU       = "content-understanding"
 )
 
 var (
@@ -62,6 +64,8 @@ type budget struct {
 	pageURL      string
 	imageHook    ImageHook
 	styleMap     string
+	docIntel     *DocIntel
+	contentCU    *ContentUnderstanding
 }
 
 // EmbeddedImage is one image stored inside an Office package.
@@ -83,6 +87,10 @@ type Options struct {
 	ImageHook ImageHook
 	StyleMap  string
 	KeepData  bool
+	// DocIntel and ContentUnderstanding are used only when set. They do not
+	// call Azure by themselves; the caller supplies the client.
+	DocIntel             *DocIntel
+	ContentUnderstanding *ContentUnderstanding
 }
 
 // Extract reads r up to 25 MB and dispatches on MIME, then on the file name
@@ -121,6 +129,8 @@ func extract(r io.Reader, mimeType, filename string, opt Options, maxOut int) (R
 		imageHook:    opt.ImageHook,
 		styleMap:     opt.StyleMap,
 		keepData:     opt.KeepData,
+		docIntel:     opt.DocIntel,
+		contentCU:    opt.ContentUnderstanding,
 	})
 	if err != nil {
 		return Result{}, err
@@ -175,6 +185,9 @@ func cutUTF8(s string, maxOut int) string {
 }
 
 func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, error) {
+	if res, handled, err := convertCloud(data, mimeType, filename, lim); handled || err != nil {
+		return res, err
+	}
 	kind, charset, ok := detect(mimeType, filename)
 	if !ok && strings.TrimSpace(mimeType) == "" && strings.TrimSpace(filename) == "" && len(data) > 0 && utf8.Valid(data) {
 		// No MIME and no name: keep valid UTF-8, including a character that
