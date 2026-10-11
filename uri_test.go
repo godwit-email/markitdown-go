@@ -5,11 +5,29 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func pathToFileURI(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	var b strings.Builder
+	b.WriteString("file://")
+	for _, part := range strings.Split(filepath.ToSlash(abs), "/") {
+		if part == "" {
+			continue
+		}
+		b.WriteByte('/')
+		b.WriteString(url.PathEscape(part))
+	}
+	return b.String()
+}
 
 func TestParseDataURI(t *testing.T) {
 	mimeType, attrs, data, err := parseDataURI("data:text/plain;base64,SGVsbG8sIFdvcmxkIQ==")

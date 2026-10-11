@@ -25,43 +25,6 @@ type URIError struct{ Msg string }
 
 func (e *URIError) Error() string { return e.Msg }
 
-// HTTPStatusError is a failed HTTP fetch. Detail may name the host; the MCP
-// tool result must not.
-type HTTPStatusError struct {
-	Status int
-	Detail string
-}
-
-func (e *HTTPStatusError) Error() string { return e.Detail }
-
-// FetchError is a transport failure. Detail may name addresses; the MCP tool
-// result must not.
-type FetchError struct{ Detail string }
-
-func (e *FetchError) Error() string { return e.Detail }
-
-// ConversionAttempt is one converter that accepted the input and then failed.
-type ConversionAttempt struct {
-	Converter string
-	Err       error
-	Stack     []uintptr
-}
-
-// FileConversionError aggregates converter failures. The client-facing MCP
-// message is the fixed sentence; attempts stay on the error.
-type FileConversionError struct {
-	Attempts []ConversionAttempt
-}
-
-func (e *FileConversionError) Error() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "File conversion failed after %d attempts:\n", len(e.Attempts))
-	for _, a := range e.Attempts {
-		fmt.Fprintf(&b, " - %s threw %T with message: %v\n", a.Converter, a.Err, a.Err)
-	}
-	return b.String()
-}
-
 // ConvertURI reads a file: or data: URI and extracts it. http and https are
 // not fetched.
 func ConvertURI(uri string, maxOut int, opt Options) (Result, error) {
@@ -109,7 +72,7 @@ func ConvertURI(uri string, maxOut int, opt Options) (Result, error) {
 		}
 		return extract(bytes.NewReader(data), charsetMIME(data, mimeType, ""), "", opt, maxOut)
 	default:
-		return Result{}, &FetchError{Detail: "network fetch is not available"}
+		return Result{}, &URIError{Msg: "network fetch is not available"}
 	}
 }
 
