@@ -4,8 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
-	"github.com/godwit-email/markitdown-go"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/godwit-email/markitdown-go"
+	"github.com/godwit-email/markitdown-go/internal/budget"
 	"github.com/xuri/excelize/v2"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
@@ -414,6 +416,79 @@ func TestZIPBudgets(t *testing.T) {
 	_, err = markitdown.Extract(context.Background(), markitdown.Request{R: strings.NewReader("not a zip"), MIME: "", Filename: "bad.zip", MaxOut: 0})
 	if !errors.Is(err, markitdown.ErrCorrupt) {
 		t.Fatal(err)
+	}
+}
+
+func patchUncompressed(t *testing.T, z []byte, from, to uint32) []byte {
+	t.Helper()
+	b := append([]byte(nil), z...)
+	set := func(i, off int) {
+		if i+off+4 > len(b) {
+			return
+		}
+		if binary.LittleEndian.Uint32(b[i+off:i+off+4]) == from {
+			binary.LittleEndian.PutUint32(b[i+off:i+off+4], to)
+		}
+	}
+	for i := 0; i+30 <= len(b); i++ {
+		switch {
+		case bytes.Equal(b[i:i+4], []byte{'P', 'K', 3, 4}):
+			set(i, 22)
+		case bytes.Equal(b[i:i+4], []byte{'P', 'K', 1, 2}):
+			set(i, 24)
+		}
+	}
+	return b
+}
+
+func TestZIPActualSizeStopsTheArchive(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("lie.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(bytes.Repeat([]byte{'A'}, 200)); err != nil {
+		t.Fatal(err)
+	}
+	w, err = zw.Create("after.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("AFTER")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := patchUncompressed(t, buf.Bytes(), 200, 40)
+	left := int64(80)
+	files := 100
+	ctx := budget.With(context.Background(), &budget.State{Depth: 0, Files: &files, Left: &left})
+	res, err := markitdown.Extract(ctx, markitdown.Request{
+		R: bytes.NewReader(raw), MIME: "application/zip", Filename: "lie.zip",
+	})
+	if err != nil || !res.Partial || res.Kind != "zip" {
+		t.Fatalf("%#v %v", res, err)
+	}
+	if strings.Contains(res.Text, "AAAA") || strings.Contains(res.Text, "AFTER") {
+		t.Fatalf("%q", res.Text)
+	}
+}
+
+func TestZIPDepthSkipsNestedZipKeepsSibling(t *testing.T) {
+	deep := zipEntries(t, []zipEntry{{"leaf.txt", "deep"}})
+	mid := zipEntries(t, []zipEntry{{"side.txt", "ok"}, {"nested.zip", string(deep)}})
+	layer2 := zipEntries(t, []zipEntry{{"inner.zip", string(mid)}})
+	layer1 := zipEntries(t, []zipEntry{{"inner.zip", string(layer2)}})
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(layer1), MIME: "", Filename: "d.zip",
+	})
+	if err != nil || !res.Partial {
+		t.Fatalf("%#v %v", res, err)
+	}
+	if !strings.Contains(res.Text, "ok") || strings.Contains(res.Text, "deep") || strings.Contains(res.Text, "nested.zip") {
+		t.Fatalf("%q", res.Text)
 	}
 }
 
