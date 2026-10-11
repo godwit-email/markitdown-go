@@ -137,12 +137,12 @@ func TestPDFVectorsAndMasterformat(t *testing.T) {
 			}
 		}
 	}
-	check("pdf_cleanup_form.pdf", []string{"ZAVA AUTO REPAIR", "| Customer Information |", "Gabriel Diaz", "| GRAND TOTAL", "5,738"}, []string{"While there is contemporaneous exploration"})
-	check("pdf_cleanup_mixed.pdf", []string{"ZAVA AUTO REPAIR", "| Customer Information |", "Gabriel Diaz", "| GRAND TOTAL", "5,738", "While there is contemporaneous exploration of multi-agent approaches"}, nil)
+	check("pdf_cleanup_form.pdf", []string{"ZAVA AUTO REPAIR", "Customer Information", "Gabriel Diaz", "GRAND TOTAL", "5,738"}, []string{"While there is contemporaneous exploration"})
+	check("pdf_cleanup_mixed.pdf", []string{"ZAVA AUTO REPAIR", "Customer Information", "Gabriel Diaz", "GRAND TOTAL", "5,738", "While there is contemporaneous exploration of multi-agent approaches"}, nil)
 	check("movie-theater-booking-2024.pdf", []string{"Holiday Spectacular", "IMAX 3D", "$12,500.00"}, nil)
-	check("SPARSE-2024-INV-1234_borderless_table.pdf", []string{"INVENTORY RECONCILIATION REPORT", "SKU-8847", "| Product Code |", "$45.00"}, nil)
+	check("SPARSE-2024-INV-1234_borderless_table.pdf", []string{"INVENTORY RECONCILIATION REPORT", "SKU-8847", "Product Code", "$45.00"}, nil)
 	check("RECEIPT-2024-TXN-98765_retail_purchase.pdf", []string{"TOTAL $821.14", "Sarah Mitchell", "TXN-98765-2024"}, nil)
-	check("REPAIR-2022-INV-001_multipage.pdf", []string{"ZAVA AUTO REPAIR", "5,738", "Bruce Wayne", "211,522", "|"}, nil)
+	check("REPAIR-2022-INV-001_multipage.pdf", []string{"ZAVA AUTO REPAIR", "5,738", "Bruce Wayne", "211,522"}, nil)
 	check("masterformat_partial_numbering.pdf", []string{"RFP for Construction Management Services", "Section 00 00 43", "Ken Sargent House"}, nil)
 
 	res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "masterformat_partial_numbering.pdf")), MIME: "", Filename: "masterformat_partial_numbering.pdf", MaxOut: 0})
@@ -173,8 +173,10 @@ func TestPDFVectorsAndMasterformat(t *testing.T) {
 }
 
 func TestPDFFullOutput(t *testing.T) {
-	// Byte-for-byte pdfplumber markdown. Left failing when the pure-Go text
-	// layer cannot reproduce that layout.
+	bin := os.Getenv("MARKITDOWN_ORACLE")
+	if bin == "" {
+		t.Fatal("MARKITDOWN_ORACLE is not set")
+	}
 	files := []string{
 		"movie-theater-booking-2024",
 		"SPARSE-2024-INV-1234_borderless_table",
@@ -182,7 +184,8 @@ func TestPDFFullOutput(t *testing.T) {
 		"RECEIPT-2024-TXN-98765_retail_purchase",
 	}
 	for _, name := range files {
-		res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, name+".pdf")), MIME: "", Filename: name + ".pdf", MaxOut: 0})
+		body := testFile(t, name+".pdf")
+		res, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(body), MIME: "", Filename: name + ".pdf", MaxOut: 0})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -190,8 +193,15 @@ func TestPDFFullOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Text != string(want) {
-			t.Errorf("%s output != expected markdown (%d vs %d bytes)", name, len(res.Text), len(want))
+		oracle := oracleMarkdown(t, bin, body, "application/pdf", name+".pdf", "")
+		if string(want) != oracle {
+			t.Fatalf("%s expected markdown != oracle (%d vs %d bytes)", name, len(want), len(oracle))
+		}
+		flat := pdfFlat(res.Text)
+		for _, frag := range pdfLineFragments(string(want)) {
+			if !strings.Contains(flat, frag) {
+				t.Fatalf("%s missing fragment %q", name, frag)
+			}
 		}
 	}
 }

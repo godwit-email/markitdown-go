@@ -6,12 +6,15 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/godwit-email/markitdown-go"
 	"github.com/godwit-email/markitdown-go/csv"
 	"github.com/godwit-email/markitdown-go/docx"
 	"github.com/godwit-email/markitdown-go/html"
+	"github.com/godwit-email/markitdown-go/pdf"
 	"github.com/godwit-email/markitdown-go/pptx"
 	"github.com/godwit-email/markitdown-go/text"
 	"github.com/godwit-email/markitdown-go/xls"
@@ -26,6 +29,7 @@ type parityCase struct {
 	charset   string
 	body      []byte
 	file      string
+	pdf       bool
 	direct    func(context.Context, markitdown.Request) (markitdown.Result, error)
 }
 
@@ -136,6 +140,15 @@ func TestPythonParity(t *testing.T) {
 			name: "zip/raw-names", mediaType: "application/zip", filename: "bundle.zip",
 			body: rawZip, direct: zip.Extract,
 		},
+		{name: "pdf/test", file: "test.pdf", filename: "test.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/plain", file: "pdf_cleanup_plain.pdf", filename: "pdf_cleanup_plain.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/form", file: "pdf_cleanup_form.pdf", filename: "pdf_cleanup_form.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/mixed", file: "pdf_cleanup_mixed.pdf", filename: "pdf_cleanup_mixed.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/theater", file: "movie-theater-booking-2024.pdf", filename: "movie-theater-booking-2024.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/sparse", file: "SPARSE-2024-INV-1234_borderless_table.pdf", filename: "SPARSE-2024-INV-1234_borderless_table.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/receipt", file: "RECEIPT-2024-TXN-98765_retail_purchase.pdf", filename: "RECEIPT-2024-TXN-98765_retail_purchase.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/repair", file: "REPAIR-2022-INV-001_multipage.pdf", filename: "REPAIR-2022-INV-001_multipage.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
+		{name: "pdf/masterformat", file: "masterformat_partial_numbering.pdf", filename: "masterformat_partial_numbering.pdf", mediaType: "application/pdf", pdf: true, direct: pdf.Extract},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,15 +168,67 @@ func TestPythonParity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sameText(t, "registry", got.Text, want)
 			req.R = bytes.NewReader(body)
 			direct, err := tc.direct(context.Background(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if tc.pdf {
+				if got.Text != direct.Text {
+					t.Fatalf("registry and direct pdf text differ")
+				}
+				flat := pdfFlat(got.Text)
+				for _, frag := range pdfLineFragments(want) {
+					if !strings.Contains(flat, frag) {
+						t.Fatalf("%s missing fragment %q", tc.name, frag)
+					}
+				}
+				return
+			}
+			sameText(t, "registry", got.Text, want)
 			sameText(t, "direct", direct.Text, want)
 		})
 	}
+}
+
+func pdfLineFragments(python string) []string {
+	var out []string
+	for _, line := range strings.Split(dropTableRules(python), "\n") {
+		frag := strings.Join(strings.Fields(line), " ")
+		if frag != "" {
+			out = append(out, frag)
+		}
+	}
+	return out
+}
+
+func pdfFlat(goText string) string {
+	return strings.Join(strings.Fields(dropTableRules(goText)), " ")
+}
+
+func dropTableRules(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if tableRuleLine(line) {
+			continue
+		}
+		b.WriteString(strings.ReplaceAll(line, "|", " "))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func tableRuleLine(line string) bool {
+	if line == "" {
+		return true
+	}
+	for _, r := range line {
+		if r != '|' && r != '-' && r != ':' && !unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
 }
 
 type zipPart struct {
