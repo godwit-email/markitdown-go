@@ -12,6 +12,7 @@ type docxCtx struct {
 	hook ImageHook
 	uTag string
 	keep bool
+	ocr  *ocrSession
 	err  error
 }
 
@@ -40,6 +41,7 @@ func convertDOCX(data []byte, lim budget) (Result, error) {
 		hook: lim.imageHook,
 		uTag: underlineTag(lim.styleMap, embeddedStyleMap(zr)),
 		keep: lim.keepData,
+		ocr:  newOCRSession(lim.ocr),
 	}
 	text := renderDocx(root, styles, ctx)
 	if ctx.err != nil {
@@ -258,6 +260,9 @@ func renderDocxTable(tbl *xnode, ctx *docxCtx) string {
 		}
 		rows = append(rows, row)
 	}
+	if ctx != nil && ctx.ocr != nil && len(rows) > 0 {
+		rows = append([][]string{make([]string, len(rows[0]))}, rows...)
+	}
 	return markdownTable(rows)
 }
 
@@ -357,6 +362,17 @@ func docxDrawingImages(n *xnode, ctx *docxCtx) string {
 		}
 		defaults, overrides := contentTypes(ctx.zr)
 		info := imageInfo(part, blob, defaults, overrides)
+		if ctx.ocr != nil {
+			md, ok := ctx.ocr.markdown(OCRImage{Data: blob, Name: info.Name, MIME: info.MIME})
+			if ctx.ocr.err != nil {
+				ctx.err = ctx.ocr.err
+				return b.String()
+			}
+			if ok {
+				b.WriteString(md)
+				continue
+			}
+		}
 		alt := picAlt(n)
 		if alt == "" {
 			alt = info.Name

@@ -23,7 +23,7 @@ func convertXLSX(data []byte, lim budget) (Result, error) {
 	defer f.Close()
 
 	var images map[string][]EmbeddedImage
-	if lim.imageHook != nil {
+	if lim.imageHook != nil || lim.ocr != nil {
 		images, err = xlsxSheetImages(repaired)
 		if err != nil {
 			return Result{}, err
@@ -33,12 +33,13 @@ func convertXLSX(data []byte, lim budget) (Result, error) {
 	var b strings.Builder
 	cells := 0
 	partial := false
+	ocr := newOCRSession(lim.ocr)
 	for _, name := range f.GetSheetList() {
 		rows, err := f.GetRows(name)
 		if err != nil {
 			return Result{}, wrapCorrupt(err)
 		}
-		table, used, stop := sheetTable(rows, &cells, &partial)
+		table, used, stop := sheetTable(rows, &cells, &partial, lim.ocr != nil)
 		imgs := images[name]
 		if !used && len(imgs) == 0 {
 			if stop {
@@ -55,7 +56,18 @@ func convertXLSX(data []byte, lim budget) (Result, error) {
 			b.WriteByte('\n')
 			b.WriteString(table)
 		}
-		if len(imgs) > 0 {
+		if len(imgs) > 0 && lim.ocr != nil {
+			block, err := ocrSheetImages(imgs, ocr)
+			if err != nil {
+				return Result{}, err
+			}
+			if block != "" {
+				if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n\n") {
+					b.WriteString("\n\n")
+				}
+				b.WriteString(block)
+			}
+		} else if len(imgs) > 0 {
 			block, err := sheetImagesMarkdown(imgs, lim.imageHook)
 			if err != nil {
 				return Result{}, err
@@ -74,7 +86,24 @@ func convertXLSX(data []byte, lim budget) (Result, error) {
 	return Result{Text: strings.TrimSpace(b.String()), Partial: partial}, nil
 }
 
-func sheetTable(rows [][]string, cells *int, partial *bool) (string, bool, bool) {
+func ocrSheetImages(imgs []EmbeddedImage, session *ocrSession) (string, error) {
+	var blocks []string
+	for _, img := range imgs {
+		md, ok := session.markdown(OCRImage{Data: img.Data, Name: img.Name, MIME: img.MIME})
+		if session.err != nil {
+			return "", session.err
+		}
+		if ok {
+			blocks = append(blocks, md)
+		}
+	}
+	if len(blocks) == 0 {
+		return "", nil
+	}
+	return "### Images in this sheet:\n\n" + strings.Join(blocks, "\n\n"), nil
+}
+
+func sheetTable(rows [][]string, cells *int, partial *bool, emptyAsNA bool) (string, bool, bool) {
 	width := 0
 	for _, row := range rows {
 		if len(row) > width {
@@ -105,6 +134,10 @@ func sheetTable(rows [][]string, cells *int, partial *bool) (string, bool, bool)
 			}
 			if i == 0 && strings.TrimSpace(cell) == "" {
 				out[col] = fmt.Sprintf("Unnamed: %d", col)
+				continue
+			}
+			if emptyAsNA && strings.TrimSpace(cell) == "" {
+				out[col] = "NaN"
 				continue
 			}
 			out[col] = escapeXLSXCell(cell)

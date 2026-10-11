@@ -66,6 +66,7 @@ type budget struct {
 	styleMap     string
 	docIntel     *DocIntel
 	contentCU    *ContentUnderstanding
+	ocr          OCRService
 }
 
 // EmbeddedImage is one image stored inside an Office package.
@@ -91,6 +92,9 @@ type Options struct {
 	// call Azure by themselves; the caller supplies the client.
 	DocIntel             *DocIntel
 	ContentUnderstanding *ContentUnderstanding
+	// OCR reads embedded images. It is only called when set, and it does not
+	// contact a vision model unless the service does.
+	OCR OCRService
 }
 
 // Extract reads r up to 25 MB and dispatches on MIME, then on the file name
@@ -131,6 +135,7 @@ func extract(r io.Reader, mimeType, filename string, opt Options, maxOut int) (R
 		keepData:     opt.KeepData,
 		docIntel:     opt.DocIntel,
 		contentCU:    opt.ContentUnderstanding,
+		ocr:          opt.OCR,
 	})
 	if err != nil {
 		return Result{}, err
