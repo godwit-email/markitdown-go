@@ -60,6 +60,29 @@ type budget struct {
 	keepData     bool
 	baseURL      string
 	pageURL      string
+	imageHook    ImageHook
+	styleMap     string
+}
+
+// EmbeddedImage is one image stored inside an Office package.
+type EmbeddedImage struct {
+	Data []byte
+	Name string
+	MIME string
+	Ext  string
+}
+
+// ImageHook renders an embedded image as an HTML fragment. A blank fragment
+// keeps the native representation. The package does not take an LLM client.
+type ImageHook func(img EmbeddedImage) (string, error)
+
+// Options are the caller inputs Extract does not carry: a page URL, an image
+// hook, a DOCX style map, and whether image data URIs are kept.
+type Options struct {
+	PageURL   string
+	ImageHook ImageHook
+	StyleMap  string
+	KeepData  bool
 }
 
 // Extract reads r up to 25 MB and dispatches on MIME, then on the file name
@@ -67,17 +90,23 @@ type budget struct {
 // cap; zero means 2 MB. Output past the cap is truncated and Partial is set.
 // ErrUnsupported is not a failure of the file contents.
 func Extract(r io.Reader, mimeType, filename string, maxOut int) (Result, error) {
-	return extract(r, mimeType, filename, "", maxOut)
+	return extract(r, mimeType, filename, Options{}, maxOut)
 }
 
 // ExtractPage is Extract for a document whose page URL is known. A YouTube
 // watch, shorts, embed, or youtu.be URL selects that converter. The package
 // still does not fetch the URL.
 func ExtractPage(r io.Reader, mimeType, filename, pageURL string, maxOut int) (Result, error) {
-	return extract(r, mimeType, filename, pageURL, maxOut)
+	return extract(r, mimeType, filename, Options{PageURL: pageURL}, maxOut)
 }
 
-func extract(r io.Reader, mimeType, filename, pageURL string, maxOut int) (Result, error) {
+// ExtractOptions is Extract with a page URL, image hook, DOCX style map, or
+// kept image data URIs.
+func ExtractOptions(r io.Reader, mimeType, filename string, maxOut int, opt Options) (Result, error) {
+	return extract(r, mimeType, filename, opt, maxOut)
+}
+
+func extract(r io.Reader, mimeType, filename string, opt Options, maxOut int) (Result, error) {
 	data, err := readLimited(r)
 	if err != nil {
 		return Result{}, err
@@ -88,7 +117,10 @@ func extract(r io.Reader, mimeType, filename, pageURL string, maxOut int) (Resul
 		depth:        maxZipDepth,
 		files:        &files,
 		uncompressed: &left,
-		pageURL:      pageURL,
+		pageURL:      opt.PageURL,
+		imageHook:    opt.ImageHook,
+		styleMap:     opt.StyleMap,
+		keepData:     opt.KeepData,
 	})
 	if err != nil {
 		return Result{}, err
@@ -170,11 +202,11 @@ func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, e
 	case KindCSV:
 		res, err = convertCSV(data, charset)
 	case KindXLSX:
-		res, err = convertXLSX(data)
+		res, err = convertXLSX(data, lim)
 	case KindDOCX:
-		res, err = convertDOCX(data)
+		res, err = convertDOCX(data, lim)
 	case KindPPTX:
-		res, err = convertPPTX(data)
+		res, err = convertPPTX(data, lim)
 	case KindPDF:
 		res, err = convertPDF(data)
 	case KindXLS:
