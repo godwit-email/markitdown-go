@@ -39,6 +39,7 @@ const (
 	KindYouTube  = "youtube"
 	KindDocIntel = "document-intelligence"
 	KindCU       = "content-understanding"
+	KindRTF      = "rtf"
 )
 
 var (
@@ -247,6 +248,8 @@ func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, e
 		res, err = convertImage(data)
 	case KindAudio:
 		res, err = convertAudio(data, filename, mimeType)
+	case KindRTF:
+		res, err = convertRTF(data)
 	default:
 		return Result{}, ErrUnsupported
 	}
@@ -302,6 +305,8 @@ func kindFromMIME(mt string) (string, bool) {
 		return KindImage, true
 	case "audio/x-wav", "audio/wav", "audio/mpeg", "audio/mp4", "video/mp4":
 		return KindAudio, true
+	case "text/rtf", "application/rtf":
+		return KindRTF, true
 	default:
 		return "", false
 	}
@@ -339,6 +344,8 @@ func kindFromExt(filename string) (string, bool) {
 		return KindImage, true
 	case ".wav", ".mp3", ".m4a", ".mp4":
 		return KindAudio, true
+	case ".rtf":
+		return KindRTF, true
 	default:
 		return "", false
 	}
