@@ -11,14 +11,19 @@ import (
 	"golang.org/x/net/html"
 )
 
-func convertHTML(data []byte, keepData bool) (Result, error) {
+type htmlOpt struct {
+	keepData bool
+	base     string
+}
+
+func convertHTML(data []byte, opt htmlOpt) (Result, error) {
 	doc, err := html.Parse(bytes.NewReader(data))
 	if err != nil {
 		return Result{}, wrapCorrupt(err)
 	}
 	if wiki := findHTMLID(doc, "mw-content-text"); wiki != nil {
 		title := wikiTitle(doc)
-		body := strings.TrimSpace(renderBlock(wiki, keepData))
+		body := strings.TrimSpace(renderBlock(wiki, opt))
 		text := body
 		if title != "" {
 			text = "# " + title + "\n\n" + body
@@ -32,7 +37,7 @@ func convertHTML(data []byte, keepData bool) (Result, error) {
 				continue
 			}
 			rewriteBingLinks(algo)
-			part := strings.TrimSpace(renderBlock(algo, keepData))
+			part := strings.TrimSpace(renderBlock(algo, opt))
 			if part == "" {
 				continue
 			}
@@ -53,7 +58,7 @@ func convertHTML(data []byte, keepData bool) (Result, error) {
 	if root == nil {
 		root = doc
 	}
-	return Result{Text: strings.TrimSpace(renderBlock(root, keepData))}, nil
+	return Result{Text: strings.TrimSpace(renderBlock(root, opt))}, nil
 }
 
 func wikiTitle(doc *html.Node) string {
@@ -75,7 +80,7 @@ func cleanTitle(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func renderBlock(n *html.Node, keepData bool) string {
+func renderBlock(n *html.Node, opt htmlOpt) string {
 	var parts []string
 	var inline strings.Builder
 	flush := func() {
@@ -89,12 +94,12 @@ func renderBlock(n *html.Node, keepData bool) string {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if isHTMLBlock(c) {
 			flush()
-			if s := strings.TrimSpace(renderNode(c, keepData)); s != "" {
+			if s := strings.TrimSpace(renderNode(c, opt)); s != "" {
 				parts = append(parts, s)
 			}
 			continue
 		}
-		inline.WriteString(renderNode(c, keepData))
+		inline.WriteString(renderNode(c, opt))
 	}
 	flush()
 	return strings.Join(parts, "\n\n")
@@ -112,56 +117,102 @@ func isHTMLBlock(n *html.Node) bool {
 	}
 }
 
-func renderNode(n *html.Node, keepData bool) string {
+func renderNode(n *html.Node, opt htmlOpt) string {
 	if n.Type == html.TextNode {
 		return strings.ReplaceAll(n.Data, "\t", " ")
 	}
 	if n.Type != html.ElementNode {
-		return renderKids(n, keepData)
+		return renderKids(n, opt)
+	}
+	if base := attr(n, "xml:base"); base != "" {
+		opt.base = resolveURL(opt.base, base)
 	}
 	switch n.Data {
 	case "script", "style", "noscript", "svg", "head":
 		return ""
 	case "br":
-		return "\n"
+		if insideMark(n) {
+			return "\n"
+		}
+		return "  \n"
+	case "pre":
+		return "```\n" + strings.Trim(textContentHTML(n), "\n") + "\n```"
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		level := int(n.Data[1] - '0')
-		inner := strings.TrimSpace(renderKids(n, keepData))
+		inner := strings.TrimSpace(renderKids(n, opt))
 		if inner == "" {
 			return ""
 		}
 		return strings.Repeat("#", level) + " " + inner
-	case "p", "div", "section", "article", "main", "center", "header", "footer", "nav", "figure", "figcaption", "blockquote", "ul", "ol", "dl", "table", "tbody", "thead", "tfoot", "tr":
-		return renderBlock(n, keepData)
+	case "p", "div", "section", "article", "main", "center", "header", "footer", "nav", "figure", "figcaption", "table", "tbody", "thead", "tfoot", "tr", "dl":
+		return renderBlock(n, opt)
+	case "blockquote":
+		return prefixLines(renderBlock(n, opt), "> ")
+	case "ul":
+		return renderList(n, false, opt)
+	case "ol":
+		return renderList(n, true, opt)
 	case "li":
-		inner := strings.TrimSpace(renderKids(n, keepData))
-		if inner == "" {
-			return ""
-		}
-		return inner
+		return strings.TrimSpace(renderKids(n, opt))
 	case "a":
-		return renderLink(n, keepData)
+		return renderLink(n, opt)
 	case "img":
-		return renderImg(n, keepData)
+		return renderImg(n, opt)
 	case "b", "strong":
-		return wrapMark(renderKids(n, keepData), "**", "**", false)
+		return wrapMark(renderKids(n, opt), "**", "**", false)
 	case "i", "em":
-		return wrapMark(renderKids(n, keepData), "*", "*", false)
+		return wrapMark(renderKids(n, opt), "*", "*", false)
 	case "u":
-		return wrapUnderline(renderKids(n, keepData))
+		return wrapUnderline(renderKids(n, opt))
 	case "s", "del", "strike":
-		return wrapMark(renderKids(n, keepData), "~~", "~~", true)
+		return wrapMark(renderKids(n, opt), "~~", "~~", true)
 	default:
-		return renderKids(n, keepData)
+		return renderKids(n, opt)
 	}
 }
 
-func renderKids(n *html.Node, keepData bool) string {
+func renderKids(n *html.Node, opt htmlOpt) string {
 	var b strings.Builder
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		b.WriteString(renderNode(c, keepData))
+		b.WriteString(renderNode(c, opt))
 	}
 	return b.String()
+}
+
+func renderList(n *html.Node, ordered bool, opt htmlOpt) string {
+	var b strings.Builder
+	i := 1
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode || c.Data != "li" {
+			continue
+		}
+		item := strings.TrimSpace(renderKids(c, opt))
+		if item == "" {
+			continue
+		}
+		if ordered {
+			fmt.Fprintf(&b, "%d. %s\n", i, item)
+			i++
+		} else {
+			b.WriteString("* ")
+			b.WriteString(item)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func prefixLines(s, prefix string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		b.WriteString(prefix)
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func wrapUnderline(text string) string {
@@ -183,6 +234,7 @@ func wrapMark(text, open, close string, dropEmpty bool) string {
 		return text
 	}
 	lead, core, trail := edgeSpace(text)
+	core = trimLineEnds(core)
 	lead = collapseSpaces(lead)
 	trail = collapseSpaces(trail)
 	if strings.TrimSpace(core) == "" {
@@ -206,6 +258,40 @@ func edgeSpace(s string) (lead, core, trail string) {
 	return s[:i], s[i:j], s[j:]
 }
 
+func insideMark(n *html.Node) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		switch p.Data {
+		case "u", "s", "del", "strike":
+			return true
+		}
+	}
+	return false
+}
+
+func trimLineEnds(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func textContentHTML(n *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.TextNode {
+			b.WriteString(n.Data)
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return b.String()
+}
+
 func collapseSpaces(s string) string {
 	if s == "" {
 		return ""
@@ -213,8 +299,8 @@ func collapseSpaces(s string) string {
 	return " "
 }
 
-func renderLink(n *html.Node, keepData bool) string {
-	text := renderKids(n, keepData)
+func renderLink(n *html.Node, opt htmlOpt) string {
+	text := renderKids(n, opt)
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
@@ -223,7 +309,7 @@ func renderLink(n *html.Node, keepData bool) string {
 	if href == "" {
 		return text
 	}
-	quoted, ok := quoteHref(href)
+	quoted, ok := quoteHref(resolveURL(opt.base, href))
 	if !ok {
 		return text
 	}
@@ -234,14 +320,20 @@ func renderLink(n *html.Node, keepData bool) string {
 	return "[" + text + "](" + quoted + titlePart + ")"
 }
 
-func renderImg(n *html.Node, keepData bool) string {
+func renderImg(n *html.Node, opt htmlOpt) string {
 	alt := strings.ReplaceAll(attr(n, "alt"), "\n", " ")
 	src := attr(n, "src")
 	dataSrc := attr(n, "data-src")
-	if dataSrc != "" && (src == "" || (isDataURI(src) && !keepData)) {
+	if dataSrc != "" && (src == "" || (isDataURI(src) && !opt.keepData)) {
 		src = dataSrc
 	}
-	if isDataURI(src) && !keepData {
+	if src != "" && !isDataURI(src) {
+		src = resolveURL(opt.base, src)
+	}
+	if dataSrc != "" && !isDataURI(dataSrc) && src == dataSrc {
+		src = resolveURL(opt.base, src)
+	}
+	if isDataURI(src) && !opt.keepData {
 		if i := strings.Index(src, ","); i >= 0 {
 			src = src[:i] + "..."
 		} else {
@@ -254,6 +346,24 @@ func renderImg(n *html.Node, keepData bool) string {
 		titlePart = ` "` + strings.ReplaceAll(title, `"`, `\"`) + `"`
 	}
 	return "![" + alt + "](" + src + titlePart + ")"
+}
+
+func resolveURL(base, ref string) string {
+	if ref == "" {
+		return base
+	}
+	if base == "" {
+		return ref
+	}
+	bu, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	ru, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return bu.ResolveReference(ru).String()
 }
 
 func isDataURI(s string) bool {

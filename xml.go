@@ -9,10 +9,12 @@ import (
 )
 
 type xnode struct {
-	local string
-	attr  map[string]string
-	text  string
-	kids  []*xnode
+	local  string
+	space  string
+	attr   map[string]string
+	text   string
+	kids   []*xnode
+	parent *xnode
 }
 
 func openZip(data []byte) (*zip.Reader, error) {
@@ -59,11 +61,15 @@ func parseXML(data []byte) (*xnode, error) {
 }
 
 func parseElem(dec *xml.Decoder, start xml.StartElement) (*xnode, error) {
-	n := &xnode{local: start.Name.Local}
+	n := &xnode{local: start.Name.Local, space: start.Name.Space}
 	if len(start.Attr) > 0 {
 		n.attr = make(map[string]string, len(start.Attr))
 		for _, a := range start.Attr {
-			n.attr[a.Name.Local] = a.Value
+			key := a.Name.Local
+			if a.Name.Space == "http://www.w3.org/XML/1998/namespace" {
+				key = "xml:" + a.Name.Local
+			}
+			n.attr[key] = a.Value
 		}
 	}
 	for {
@@ -77,11 +83,15 @@ func parseElem(dec *xml.Decoder, start xml.StartElement) (*xnode, error) {
 			if err != nil {
 				return nil, err
 			}
+			c.parent = n
 			n.kids = append(n.kids, c)
 		case xml.EndElement:
 			return n, nil
 		case xml.CharData:
-			n.text += string(append([]byte(nil), t...))
+			s := string(append([]byte(nil), t...))
+			n.text += s
+			child := &xnode{local: "#text", text: s, parent: n}
+			n.kids = append(n.kids, child)
 		}
 	}
 }
