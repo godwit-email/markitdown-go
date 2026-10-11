@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 func convertZIP(data []byte, filename string, lim budget) (Result, error) {
@@ -269,7 +270,7 @@ func appendBlock(b *strings.Builder, block string) {
 }
 
 func writePic(b *strings.Builder, pic *xnode, env slideEnv) {
-	alt := picAlt(pic)
+	alt := cleanPictureAlt(picAlt(pic))
 	rid := picEmbed(pic)
 	if env.ocr != nil && rid != "" && env.zr != nil {
 		for _, rel := range zipRels(env.zr, relsPath(env.name), "image") {
@@ -309,10 +310,53 @@ func writePic(b *strings.Builder, pic *xnode, env slideEnv) {
 			return
 		}
 	}
-	if alt != "" {
-		b.WriteString(alt)
-		b.WriteByte('\n')
+	// Native caption is the alt text plus a sanitized shape name, matching
+	// PptxConverter when keep_data_uris is off. The bytes stay out of the URI.
+	b.WriteString(pictureMarkdown(pic))
+	b.WriteByte('\n')
+}
+
+func pictureMarkdown(pic *xnode) string {
+	name, descr := "", ""
+	for _, pr := range findAll(pic, "cNvPr") {
+		if name == "" {
+			name = pr.attr["name"]
+		}
+		if descr == "" {
+			descr = pr.attr["descr"]
+		}
 	}
+	alt := descr
+	if strings.TrimSpace(alt) == "" {
+		alt = name
+	}
+	var file strings.Builder
+	for _, r := range name {
+		if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			file.WriteRune(r)
+		}
+	}
+	file.WriteString(".jpg")
+	return "![" + cleanPictureAlt(alt) + "](" + file.String() + ")"
+}
+
+func cleanPictureAlt(s string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range s {
+		if r == '\r' || r == '\n' || r == '[' || r == ']' || unicode.IsSpace(r) {
+			if b.Len() > 0 {
+				space = true
+			}
+			continue
+		}
+		if space {
+			b.WriteByte(' ')
+			space = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func picEmbed(pic *xnode) string {
