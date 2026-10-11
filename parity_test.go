@@ -9,6 +9,7 @@ import (
 
 	"github.com/godwit-email/markitdown-go"
 	"github.com/godwit-email/markitdown-go/csv"
+	"github.com/godwit-email/markitdown-go/html"
 	"github.com/godwit-email/markitdown-go/text"
 )
 
@@ -63,6 +64,18 @@ func TestPythonParity(t *testing.T) {
 		{
 			name: "csv/octet", mediaType: "application/octet-stream", filename: "a.csv",
 			body: []byte("a,b\n1,2\n"), direct: csv.Extract,
+		},
+		{
+			name: "html/blog", mediaType: "text/html", filename: "test_blog.html",
+			charset: "utf-8", file: "test_blog.html", direct: html.Extract,
+		},
+		{
+			name: "html/wikipedia", mediaType: "text/html", filename: "test_wikipedia.html",
+			charset: "utf-8", file: "test_wikipedia.html", direct: html.Extract,
+		},
+		{
+			name: "html/serp", mediaType: "text/html", filename: "test_serp.html",
+			charset: "utf-8", file: "test_serp.html", direct: html.Extract,
 		},
 	}
 	for _, tc := range cases {

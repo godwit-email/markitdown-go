@@ -51,7 +51,7 @@ func extract(ctx context.Context, in markitdown.Input, opt Options) (markitdown.
 	if err := ctx.Err(); err != nil {
 		return markitdown.Result{}, err
 	}
-	text, err := htmlmd.Convert(in.Data, htmlmd.Options{KeepData: opt.KeepDataURIs, Base: opt.BaseURL})
+	text, err := htmlmd.Convert(in.Data, htmlmd.Options{KeepData: opt.KeepDataURIs, Base: opt.BaseURL, PipeTables: true})
 	if err != nil {
 		return markitdown.Result{}, err
 	}

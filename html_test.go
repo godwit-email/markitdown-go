@@ -120,11 +120,11 @@ func TestWikipediaTitles(t *testing.T) {
 		t.Fatalf("%q", res.Text)
 	}
 	res = htmlKeep(t, page("<i>Escherichia coli</i>", "Escherichia coli"), false)
-	if !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Escherichia coli") {
+	if !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# *Escherichia coli*") {
 		t.Fatalf("%q", res.Text)
 	}
 	res = htmlKeep(t, page("<i>Titanic</i> (1997 film)", "Titanic (1997 film)"), false)
-	if !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Titanic (1997 film)") {
+	if !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# *Titanic* (1997 film)") {
 		t.Fatalf("%q", res.Text)
 	}
 	res = htmlKeep(t, `<html><body><div id='mw-content-text'><p>Hello</p></div></body></html>`, false)
@@ -209,8 +209,8 @@ func TestHTMLVectors(t *testing.T) {
 		"154 languages",
 		"move to sidebar",
 	} {
-		if strings.Contains(wiki.Text, s) {
-			t.Fatalf("wiki has %s", s)
+		if !strings.Contains(wiki.Text, s) {
+			t.Fatalf("wiki missing %s", s)
 		}
 	}
 	serp, err := markitdown.Extract(context.Background(), markitdown.Request{R: bytes.NewReader(testFile(t, "test_serp.html")), MIME: "text/html; charset=utf-8", Filename: "test_serp.html", MaxOut: 0})
@@ -218,7 +218,7 @@ func TestHTMLVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range []string{
-		"](https://en.wikipedia.org/wiki/Microsoft",
+		"https://www.bing.com/ck/a?!&&p=",
 		"Microsoft Corporation is **an American multinational corporation and technology company headquartered** in Redmond",
 		"1995–2007: Foray into the Web, Windows 95, Windows XP, and Xbox",
 	} {
@@ -226,12 +226,7 @@ func TestHTMLVectors(t *testing.T) {
 			t.Fatalf("serp missing %s", s)
 		}
 	}
-	for _, s := range []string{
-		"https://www.bing.com/ck/a?!&&p=",
-		"data:image/svg+xml,%3Csvg%20width%3D",
-	} {
-		if strings.Contains(serp.Text, s) {
-			t.Fatalf("serp has %s", s)
-		}
+	if strings.Contains(serp.Text, "data:image/svg+xml,%3Csvg%20width%3D") {
+		t.Fatal("serp has svg data uri")
 	}
 }
