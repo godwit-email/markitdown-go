@@ -4,12 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"github.com/godwit-email/markitdown-go"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 	"unicode"
+
+	"github.com/godwit-email/markitdown-go"
 )
 
 func TestXLSVector(t *testing.T) {
