@@ -76,6 +76,11 @@ func Media(v string) (string, map[string]string) {
 		}
 		return "", map[string]string{}
 	}
+	// A token with no slash is not a type/subtype. Treat it as an empty type
+	// so dispatch falls through to the filename extension.
+	if !strings.Contains(mt, "/") {
+		return "", map[string]string{}
+	}
 	if params == nil {
 		params = map[string]string{}
 	}
