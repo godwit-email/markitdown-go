@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/godwit-email/markitdown-go"
+	"github.com/godwit-email/markitdown-go/pdf"
+	"github.com/godwit-email/markitdown-go/text"
 )
 
 func TestConstantsAndSentinels(t *testing.T) {
@@ -97,4 +101,60 @@ func TestRegisterPanics(t *testing.T) {
 	mustPanic(func() {
 		markitdown.Register(panicConv{kind: "fresh-kind-2", mime: "application/x-test-pdf-2", ext: ".pdf"})
 	})
+}
+
+type boomReader struct{ err error }
+
+func (b boomReader) Read([]byte) (int, error) { return 0, b.err }
+
+func TestReaderErrorIsCorrupt(t *testing.T) {
+	_, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: boomReader{err: errors.New("disk")}, MIME: "text/plain", Filename: "a.txt",
+	})
+	if !errors.Is(err, markitdown.ErrCorrupt) || errors.Is(err, markitdown.ErrTooLarge) {
+		t.Fatal(err)
+	}
+	_, err = textExtract(t, boomReader{err: errors.New("disk")})
+	if !errors.Is(err, markitdown.ErrCorrupt) {
+		t.Fatal(err)
+	}
+}
+
+func textExtract(t *testing.T, r io.Reader) (markitdown.Result, error) {
+	t.Helper()
+	return text.Extract(context.Background(), markitdown.Request{
+		R: r, MIME: "text/plain", Filename: "a.txt",
+	})
+}
+
+type cancelReader struct{ cancel context.CancelFunc }
+
+func (c cancelReader) Read([]byte) (int, error) {
+	c.cancel()
+	return 0, context.Canceled
+}
+
+func TestCancelDuringRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := markitdown.Extract(ctx, markitdown.Request{
+		R: cancelReader{cancel: cancel}, MIME: "text/plain", Filename: "a.txt",
+	})
+	if !errors.Is(err, context.Canceled) || errors.Is(err, markitdown.ErrCorrupt) {
+		t.Fatal(err)
+	}
+}
+
+func TestDirectExtractWrongTypeIsCorrupt(t *testing.T) {
+	_, err := pdf.Extract(context.Background(), markitdown.Request{
+		R: strings.NewReader("hello"), MIME: "text/plain", Filename: "a.txt",
+	})
+	if !errors.Is(err, markitdown.ErrCorrupt) || errors.Is(err, markitdown.ErrUnsupported) {
+		t.Fatal(err)
+	}
+	_, err = pdf.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(encryptedPDF()), MIME: "", Filename: "secret.pdf",
+	})
+	if !errors.Is(err, markitdown.ErrUnsupported) {
+		t.Fatal(err)
+	}
 }

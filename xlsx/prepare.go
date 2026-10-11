@@ -15,6 +15,9 @@ func prepare(ctx context.Context, req markitdown.Request) (markitdown.Input, err
 		return markitdown.Input{}, err
 	}
 	data, err := run.Read(req.R, markitdown.MaxInput)
+	if cerr := ctx.Err(); cerr != nil {
+		return markitdown.Input{}, cerr
+	}
 	if err != nil {
 		return markitdown.Input{}, err
 	}

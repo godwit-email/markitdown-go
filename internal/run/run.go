@@ -52,7 +52,10 @@ func Read(r io.Reader, max int) ([]byte, error) {
 			return buf.Bytes(), nil
 		}
 		if err != nil {
-			return nil, err
+			if errors.Is(err, ErrTooLarge) {
+				return nil, ErrTooLarge
+			}
+			return nil, Wrap(err)
 		}
 	}
 }

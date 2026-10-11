@@ -197,7 +197,7 @@ func repairShowZeroes(data []byte) ([]byte, error) {
 		rc.Close()
 		if err != nil {
 			zw.Close()
-			return nil, err
+			return nil, run.Wrap(err)
 		}
 		name := f.Name
 		if strings.HasPrefix(name, "xl/worksheets/") && strings.HasSuffix(name, ".xml") && bytes.Contains(body, []byte("showZeroes")) {

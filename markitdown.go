@@ -148,6 +148,9 @@ func Extract(ctx context.Context, req Request) (Result, error) {
 		ctx = budget.With(ctx, &budget.State{Depth: 0, Files: &files, Left: &left})
 	}
 	data, err := run.Read(req.R, MaxInput)
+	if cerr := ctx.Err(); cerr != nil {
+		return Result{}, cerr
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -165,10 +168,13 @@ func Extract(ctx context.Context, req Request) (Result, error) {
 		Filename: req.Filename, MaxOut: maxOut, OCR: req.OCR,
 	})
 	if err != nil {
-		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-			return Result{}, ctx.Err()
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+			return Result{}, cerr
 		}
-		return Result{}, err
+		if errors.Is(err, ErrUnsupported) || errors.Is(err, ErrCorrupt) || errors.Is(err, ErrTooLarge) {
+			return Result{}, err
+		}
+		return Result{}, run.Wrap(err)
 	}
 	if res.Kind == "" {
 		res.Kind = c.Kind()
