@@ -64,6 +64,26 @@ func (p *Package) Read(name string) ([]byte, error) {
 	return nil, run.ErrCorrupt
 }
 
+// Budget reads every part through Read, which enforces the 25 MB caps.
+// used is restored so later Read calls still work.
+func (p *Package) Budget() error {
+	if p == nil || p.zr == nil {
+		return run.ErrCorrupt
+	}
+	saved := p.used
+	p.used = 0
+	for _, f := range p.zr.File {
+		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, "/") {
+			continue
+		}
+		if _, err := p.Read(f.Name); err != nil {
+			return err
+		}
+	}
+	p.used = saved
+	return nil
+}
+
 // Rel is one relationship whose target has been resolved to a part name.
 type Rel struct {
 	ID     string

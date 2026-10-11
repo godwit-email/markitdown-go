@@ -18,6 +18,9 @@ func convertPPTX(ctx context.Context, in markitdown.Input) (markitdown.Result, e
 	if err != nil {
 		return markitdown.Result{}, err
 	}
+	if err := zr.Budget(); err != nil {
+		return markitdown.Result{}, err
+	}
 	names := slideNames(zr)
 	if len(names) == 0 {
 		if _, err := zr.Read("ppt/presentation.xml"); err != nil {

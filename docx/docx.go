@@ -27,6 +27,9 @@ func convertDOCX(ctx context.Context, in markitdown.Input) (markitdown.Result, e
 	if err != nil {
 		return markitdown.Result{}, err
 	}
+	if err := zr.Budget(); err != nil {
+		return markitdown.Result{}, err
+	}
 	styles := map[string]int{}
 	if b, err := zr.Read("word/styles.xml"); err == nil {
 		b = repairStyles(b)

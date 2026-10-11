@@ -19,6 +19,13 @@ import (
 const maxCells = 50_000
 
 func convertXLSX(ctx context.Context, in markitdown.Input) (markitdown.Result, error) {
+	pkg, err := ooxml.Open(in.Data)
+	if err != nil {
+		return markitdown.Result{}, err
+	}
+	if err := pkg.Budget(); err != nil {
+		return markitdown.Result{}, err
+	}
 	data := in.Data
 	repaired, err := repairShowZeroes(data)
 	if err != nil {
