@@ -90,7 +90,7 @@ func TestHTMLImages(t *testing.T) {
 	if !strings.Contains(got, "![A photo](data:image/gif;base64...)") {
 		t.Fatal(got)
 	}
-	res, err := convertHTML([]byte(`<html><body><img src="`+placeholder+`" data-src="`+other+`" alt="A photo"></body></html>`), true)
+	res, err := convertHTML([]byte(`<html><body><img src="`+placeholder+`" data-src="`+other+`" alt="A photo"></body></html>`), htmlOpt{keepData: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestHTMLImages(t *testing.T) {
 	if got != "![dot](DATA:image/png;base64...)" || strings.Contains(got, "AAAA") {
 		t.Fatal(got)
 	}
-	res, err = convertHTML([]byte(`<html><body><img alt="dot" src="DATA:image/png;base64,AAAA"></body></html>`), true)
+	res, err = convertHTML([]byte(`<html><body><img alt="dot" src="DATA:image/png;base64,AAAA"></body></html>`), htmlOpt{keepData: true})
 	if err != nil || res.Text != "![dot](DATA:image/png;base64,AAAA)" {
 		t.Fatalf("%q %v", res.Text, err)
 	}
@@ -114,26 +114,26 @@ func TestWikipediaTitles(t *testing.T) {
 <div id="mw-content-text"><p>Body text.</p></div>
 </body></html>`
 	}
-	res, err := convertHTML([]byte(page(`<span lang="en" dir="ltr"><span class="mw-page-title-main">Paris</span></span>`, "Paris")), false)
+	res, err := convertHTML([]byte(page(`<span lang="en" dir="ltr"><span class="mw-page-title-main">Paris</span></span>`, "Paris")), htmlOpt{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Title != "Paris" || !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Paris") {
 		t.Fatalf("%q %q", res.Title, res.Text)
 	}
-	res, err = convertHTML([]byte(page("<i>Escherichia coli</i>", "Escherichia coli")), false)
+	res, err = convertHTML([]byte(page("<i>Escherichia coli</i>", "Escherichia coli")), htmlOpt{})
 	if err != nil || res.Title != "Escherichia coli" || !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Escherichia coli") {
 		t.Fatalf("%q %q", res.Title, res.Text)
 	}
-	res, err = convertHTML([]byte(page("<i>Titanic</i> (1997 film)", "Titanic (1997 film)")), false)
+	res, err = convertHTML([]byte(page("<i>Titanic</i> (1997 film)", "Titanic (1997 film)")), htmlOpt{})
 	if err != nil || res.Title != "Titanic (1997 film)" || !strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "# Titanic (1997 film)") {
 		t.Fatalf("%q %q", res.Title, res.Text)
 	}
-	res, err = convertHTML([]byte(`<html><body><div id='mw-content-text'><p>Hello</p></div></body></html>`), false)
+	res, err = convertHTML([]byte(`<html><body><div id='mw-content-text'><p>Hello</p></div></body></html>`), htmlOpt{})
 	if err != nil || strings.Contains(res.Text, "# None") || strings.TrimSpace(res.Text) != "Hello" {
 		t.Fatalf("%q", res.Text)
 	}
-	res, err = convertHTML([]byte(`<html><head><title>   </title></head><body><div id='mw-content-text'><p>Hello</p></div></body></html>`), false)
+	res, err = convertHTML([]byte(`<html><head><title>   </title></head><body><div id='mw-content-text'><p>Hello</p></div></body></html>`), htmlOpt{})
 	if err != nil || strings.HasPrefix(strings.TrimLeft(res.Text, "\n"), "#") || res.Title != "" || strings.TrimSpace(res.Text) != "Hello" {
 		t.Fatalf("title %q text %q", res.Title, res.Text)
 	}

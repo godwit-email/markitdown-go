@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func convertZIP(data []byte, lim budget) (Result, error) {
+func convertZIP(data []byte, filename string, lim budget) (Result, error) {
 	if lim.depth <= 0 {
 		return Result{Partial: true}, nil
 	}
@@ -18,8 +18,16 @@ func convertZIP(data []byte, lim budget) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	label := strings.TrimSpace(filename)
+	if label == "" {
+		label = "(unknown)"
+	}
 	var b strings.Builder
+	b.WriteString("Content from the zip file `")
+	b.WriteString(label)
+	b.WriteString("`:\n\n")
 	partial := false
+	wrote := false
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, "/") {
 			continue
@@ -53,6 +61,7 @@ func convertZIP(data []byte, lim budget) (Result, error) {
 			depth:        lim.depth - 1,
 			files:        lim.files,
 			uncompressed: lim.uncompressed,
+			keepData:     lim.keepData,
 		})
 		if err != nil {
 			partial = true
@@ -64,9 +73,10 @@ func convertZIP(data []byte, lim budget) (Result, error) {
 		if child.Partial {
 			partial = true
 		}
-		if b.Len() > 0 {
+		if wrote {
 			b.WriteString("\n\n")
 		}
+		wrote = true
 		b.WriteString("## File: ")
 		b.WriteString(display)
 		b.WriteString("\n\n")

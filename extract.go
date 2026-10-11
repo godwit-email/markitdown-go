@@ -31,6 +31,8 @@ const (
 	KindXLS  = "xls"
 	KindMSG  = "msg"
 	KindHTML = "html"
+	KindRSS  = "rss"
+	KindEPUB = "epub"
 )
 
 var (
@@ -51,6 +53,8 @@ type budget struct {
 	depth        int
 	files        *int
 	uncompressed *int64
+	keepData     bool
+	baseURL      string
 }
 
 // Extract reads r up to 25 MB and dispatches on MIME, then on the file name
@@ -148,9 +152,13 @@ func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, e
 	case KindMSG:
 		res, err = convertMSG(data)
 	case KindHTML:
-		res, err = convertHTML(data, false)
+		res, err = convertHTML(data, htmlOpt{keepData: lim.keepData})
+	case KindRSS:
+		res, err = convertRSS(data, lim.baseURL)
+	case KindEPUB:
+		res, err = convertEPUB(data, lim.keepData)
 	case KindZIP:
-		res, err = convertZIP(data, lim)
+		res, err = convertZIP(data, filename, lim)
 	default:
 		return Result{}, ErrUnsupported
 	}
@@ -198,6 +206,10 @@ func kindFromMIME(mt string) (string, bool) {
 		return KindZIP, true
 	case "text/html", "application/xhtml+xml":
 		return KindHTML, true
+	case "application/rss+xml", "application/rss", "application/atom+xml", "application/atom", "text/xml", "application/xml":
+		return KindRSS, true
+	case "application/epub+zip", "application/epub", "application/x-epub+zip":
+		return KindEPUB, true
 	default:
 		return "", false
 	}
@@ -223,6 +235,10 @@ func kindFromExt(filename string) (string, bool) {
 		return KindMSG, true
 	case ".html", ".htm":
 		return KindHTML, true
+	case ".xml", ".rss", ".atom":
+		return KindRSS, true
+	case ".epub":
+		return KindEPUB, true
 	case ".zip":
 		return KindZIP, true
 	default:
