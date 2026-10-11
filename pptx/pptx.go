@@ -56,7 +56,7 @@ func convertPPTX(ctx context.Context, in markitdown.Input) (markitdown.Result, e
 			b.WriteString(notes)
 		}
 	}
-	return markitdown.Result{Text: strings.TrimSpace(b.String())}, nil
+	return markitdown.Result{Text: strings.TrimSpace(b.String()), Partial: session != nil && session.partial}, nil
 }
 
 func renderChart(env slideEnv, chartEl *xmlsafe.Node) string {

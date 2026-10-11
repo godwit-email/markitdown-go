@@ -59,7 +59,7 @@ func convertDOCX(ctx context.Context, in markitdown.Input) (markitdown.Result, e
 			}
 		}
 	}
-	return markitdown.Result{Text: strings.TrimSpace(text)}, nil
+	return markitdown.Result{Text: strings.TrimSpace(text), Partial: dctx.ocr != nil && dctx.ocr.partial}, nil
 }
 
 func headingStyles(root *xmlsafe.Node) map[string]int {

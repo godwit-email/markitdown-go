@@ -80,6 +80,9 @@ func convertXLSX(ctx context.Context, in markitdown.Input) (markitdown.Result, e
 			break
 		}
 	}
+	if session != nil && session.partial {
+		partial = true
+	}
 	return markitdown.Result{Text: strings.TrimSpace(b.String()), Partial: partial}, nil
 }
 

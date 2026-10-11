@@ -188,7 +188,7 @@ func TestPDFFullOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, err := os.ReadFile("packages/markitdown/tests/test_files/expected_outputs/" + name + ".md")
+		want, err := os.ReadFile("testdata/expected_outputs/" + name + ".md")
 		if err != nil {
 			t.Fatal(err)
 		}

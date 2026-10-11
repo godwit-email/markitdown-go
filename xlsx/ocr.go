@@ -16,10 +16,11 @@ type OCRImage struct {
 }
 
 type ocrSession struct {
-	rec  markitdown.Recognizer
-	sess *ocr.Session
-	ctx  context.Context
-	err  error
+	rec     markitdown.Recognizer
+	sess    *ocr.Session
+	ctx     context.Context
+	err     error
+	partial bool
 }
 
 func newOCRSession(ctx context.Context, rec markitdown.Recognizer) *ocrSession {
@@ -51,6 +52,7 @@ func (s *ocrSession) markdown(img OCRImage) (string, bool) {
 			s.err = s.ctx.Err()
 			return "", false
 		}
+		s.partial = true
 		return "", false
 	}
 	if !ok {
