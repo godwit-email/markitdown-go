@@ -194,12 +194,7 @@ func readMember(r io.Reader, left *int64) ([]byte, bool, error) {
 }
 
 func safeMember(name string) (display, base string) {
-	name = strings.ReplaceAll(name, "\\", "/")
-	base = path.Base(name)
-	display = path.Clean(name)
-	display = strings.TrimPrefix(display, "/")
-	if display == ".." || strings.HasPrefix(display, "../") {
-		display = base
-	}
+	display = name
+	base = path.Base(strings.ReplaceAll(name, "\\", "/"))
 	return display, base
 }

@@ -1,6 +1,7 @@
 package markitdown_test
 
 import (
+	zipfile "archive/zip"
 	"bytes"
 	"context"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/godwit-email/markitdown-go/text"
 	"github.com/godwit-email/markitdown-go/xls"
 	"github.com/godwit-email/markitdown-go/xlsx"
+	"github.com/godwit-email/markitdown-go/zip"
 )
 
 type parityCase struct {
@@ -32,6 +34,11 @@ func TestPythonParity(t *testing.T) {
 	if bin == "" {
 		t.Fatal("MARKITDOWN_ORACLE is not set")
 	}
+	rawZip := zipMembers(t, []zipPart{
+		{"../x.txt", []byte("hello\n")},
+		{`dir\notes.txt`, []byte("world\n")},
+		{"inner.zip", zipMembers(t, []zipPart{{"b.txt", []byte("inside\n")}})},
+	})
 	cases := []parityCase{
 		{
 			name: "text/trailing-space", mediaType: "text/plain", filename: "a.txt",
@@ -125,6 +132,10 @@ func TestPythonParity(t *testing.T) {
 			name: "pptx/notes-empty", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 			filename: "pptx_notes_empty_run.pptx", file: "pptx_notes_empty_run.pptx", direct: pptx.Extract,
 		},
+		{
+			name: "zip/raw-names", mediaType: "application/zip", filename: "bundle.zip",
+			body: rawZip, direct: zip.Extract,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,6 +164,30 @@ func TestPythonParity(t *testing.T) {
 			sameText(t, "direct", direct.Text, want)
 		})
 	}
+}
+
+type zipPart struct {
+	name string
+	body []byte
+}
+
+func zipMembers(t *testing.T, parts []zipPart) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zipfile.NewWriter(&buf)
+	for _, p := range parts {
+		w, err := zw.Create(p.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(p.body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func oracleMarkdown(t *testing.T, bin string, body []byte, mediaType, filename, charset string) string {
