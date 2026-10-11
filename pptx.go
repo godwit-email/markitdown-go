@@ -19,7 +19,8 @@ func convertPPTX(data []byte, lim budget) (Result, error) {
 		return Result{}, nil
 	}
 	var b strings.Builder
-	for _, name := range names {
+	ocr := newOCRSession(lim.ocr)
+	for i, name := range names {
 		body, err := readZip(zr, name)
 		if err != nil {
 			return Result{}, ErrCorrupt
@@ -28,7 +29,10 @@ func convertPPTX(data []byte, lim budget) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
-		slide := strings.TrimSpace(renderSlide(root, slideEnv{zr: zr, name: name, keep: lim.keepData}))
+		slide := strings.TrimSpace(renderSlide(root, slideEnv{zr: zr, name: name, keep: lim.keepData, num: i + 1, ocr: ocr}))
+		if ocr != nil && ocr.err != nil {
+			return Result{}, ocr.err
+		}
 		notes := notesFor(zr, name)
 		if slide == "" && notes == "" {
 			continue

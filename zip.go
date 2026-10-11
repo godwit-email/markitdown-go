@@ -205,10 +205,17 @@ type slideEnv struct {
 	zr   *zip.Reader
 	name string
 	keep bool
+	num  int
+	ocr  *ocrSession
 }
 
 func renderSlide(root *xnode, env slideEnv) string {
 	var b strings.Builder
+	if env.num > 0 {
+		b.WriteString("<!-- Slide number: ")
+		b.WriteString(strconv.Itoa(env.num))
+		b.WriteString(" -->\n")
+	}
 	tree := findFirst(root, "spTree")
 	if tree == nil {
 		tree = root
@@ -244,9 +251,45 @@ func writeShapes(b *strings.Builder, n *xnode, env slideEnv) {
 	}
 }
 
+func appendBlock(b *strings.Builder, block string) {
+	s := strings.TrimRight(b.String(), "\n")
+	tail := s
+	if i := strings.LastIndex(s, "\n"); i >= 0 {
+		tail = s[i+1:]
+	}
+	b.Reset()
+	b.WriteString(s)
+	switch {
+	case strings.HasPrefix(tail, "#"):
+		b.WriteString("\n\n\n")
+	case s != "":
+		b.WriteString("\n\n")
+	}
+	b.WriteString(block)
+}
+
 func writePic(b *strings.Builder, pic *xnode, env slideEnv) {
 	alt := picAlt(pic)
 	rid := picEmbed(pic)
+	if env.ocr != nil && rid != "" && env.zr != nil {
+		for _, rel := range zipRels(env.zr, relsPath(env.name), "image") {
+			if rel.id != rid {
+				continue
+			}
+			blob, err := readZip(env.zr, rel.target)
+			if err != nil {
+				break
+			}
+			defaults, overrides := contentTypes(env.zr)
+			info := imageInfo(rel.target, blob, defaults, overrides)
+			md, ok := env.ocr.markdown(OCRImage{Data: blob, Name: info.Name, MIME: info.MIME})
+			if ok {
+				appendBlock(b, md)
+				return
+			}
+			break
+		}
+	}
 	if env.keep && rid != "" && env.zr != nil {
 		for _, rel := range zipRels(env.zr, relsPath(env.name), "image") {
 			if rel.id != rid {
@@ -291,16 +334,23 @@ func writeShape(b *strings.Builder, sp *xnode) {
 	switch phType(sp) {
 	case "title", "ctrTitle":
 		if text != "" {
-			b.WriteString("# ")
-			b.WriteString(text)
-			b.WriteByte('\n')
+			writeSlideLine(b, "# "+text)
 		}
 	default:
 		if text != "" {
-			b.WriteString(text)
+			writeSlideLine(b, text)
+		}
+	}
+}
+
+func writeSlideLine(b *strings.Builder, line string) {
+	if b.Len() > 0 && !strings.HasSuffix(b.String(), "-->\n") {
+		if !strings.HasSuffix(b.String(), "\n\n") {
 			b.WriteByte('\n')
 		}
 	}
+	b.WriteString(line)
+	b.WriteByte('\n')
 }
 
 func phType(sp *xnode) string {
