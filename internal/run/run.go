@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -90,8 +92,10 @@ func Media(v string) (string, map[string]string) {
 	return strings.ToLower(mt), params
 }
 
-// Cut truncates s to at most max bytes on a UTF-8 boundary.
+// Cut normalizes s the way Python's convert tail does, then truncates to at
+// most max bytes on a UTF-8 boundary.
 func Cut(s string, max int) (string, bool) {
+	s = normalize(s)
 	if max < 0 || len(s) <= max {
 		return s, false
 	}
@@ -100,6 +104,24 @@ func Cut(s string, max int) (string, bool) {
 		cut--
 	}
 	return s[:cut], true
+}
+
+func normalize(s string) string {
+	parts := pyNewline.Split(s, -1)
+	for i, line := range parts {
+		parts[i] = strings.TrimRightFunc(line, pySpace)
+	}
+	s = strings.Join(parts, "\n")
+	return manyNL.ReplaceAllString(s, "\n\n")
+}
+
+var (
+	pyNewline = regexp.MustCompile(`\r?\n`)
+	manyNL    = regexp.MustCompile(`\n{3,}`)
+)
+
+func pySpace(r rune) bool {
+	return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
 }
 
 // Wrap returns ErrCorrupt, keeping err in the chain.

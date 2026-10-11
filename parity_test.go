@@ -1,0 +1,109 @@
+package markitdown_test
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"os/exec"
+	"testing"
+
+	"github.com/godwit-email/markitdown-go"
+	"github.com/godwit-email/markitdown-go/text"
+)
+
+type parityCase struct {
+	name      string
+	mediaType string
+	filename  string
+	charset   string
+	body      []byte
+	file      string
+	direct    func(context.Context, markitdown.Request) (markitdown.Result, error)
+}
+
+func TestPythonParity(t *testing.T) {
+	bin := os.Getenv("MARKITDOWN_ORACLE")
+	if bin == "" {
+		t.Fatal("MARKITDOWN_ORACLE is not set")
+	}
+	cases := []parityCase{
+		{
+			name: "text/trailing-space", mediaType: "text/plain", filename: "a.txt",
+			body: []byte("a \r\nb  \r\n\r\n\r\nc\n\n\n\nd"), direct: text.Extract,
+		},
+		{
+			name: "text/json", mediaType: "application/json", filename: "test.json",
+			file: "test.json", direct: text.Extract,
+		},
+		{
+			name: "text/json-late", mediaType: "application/json", filename: "json_late_non_ascii.json",
+			file: "json_late_non_ascii.json", direct: text.Extract,
+		},
+		{
+			name: "text/markdown", mediaType: "text/markdown", filename: "note.md",
+			body: []byte("# hi \n"), direct: text.Extract,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := tc.body
+			if tc.file != "" {
+				body = testFile(t, tc.file)
+			}
+			mime := tc.mediaType
+			if tc.charset != "" {
+				mime += "; charset=" + tc.charset
+			}
+			req := markitdown.Request{
+				R: bytes.NewReader(body), MIME: mime, Filename: tc.filename, MaxOut: 0,
+			}
+			want := oracleMarkdown(t, bin, body, tc.mediaType, tc.filename, tc.charset)
+			got, err := markitdown.Extract(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sameText(t, "registry", got.Text, want)
+			req.R = bytes.NewReader(body)
+			direct, err := tc.direct(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sameText(t, "direct", direct.Text, want)
+		})
+	}
+}
+
+func oracleMarkdown(t *testing.T, bin string, body []byte, mediaType, filename, charset string) string {
+	t.Helper()
+	cmd := exec.Command(bin, mediaType, filename, charset)
+	cmd.Stdin = bytes.NewReader(body)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("oracle: %v", err)
+	}
+	return string(out)
+}
+
+func sameText(t *testing.T, which, got, want string) {
+	t.Helper()
+	if got == want {
+		return
+	}
+	n := 0
+	for n < len(got) && n < len(want) && got[n] == want[n] {
+		n++
+	}
+	t.Fatalf("%s mismatch at byte %d\n got %q\nwant %q", which, n, snippet(got, n), snippet(want, n))
+}
+
+func snippet(s string, at int) string {
+	lo := at - 40
+	if lo < 0 {
+		lo = 0
+	}
+	hi := at + 40
+	if hi > len(s) {
+		hi = len(s)
+	}
+	return s[lo:hi]
+}
