@@ -12,8 +12,10 @@ import (
 )
 
 type htmlOpt struct {
-	keepData bool
-	base     string
+	keepData      bool
+	base          string
+	closedHeading bool
+	pipeTables    bool
 }
 
 func convertHTML(data []byte, opt htmlOpt) (Result, error) {
@@ -143,8 +145,17 @@ func renderNode(n *html.Node, opt htmlOpt) string {
 		if inner == "" {
 			return ""
 		}
-		return strings.Repeat("#", level) + " " + inner
-	case "p", "div", "section", "article", "main", "center", "header", "footer", "nav", "figure", "figcaption", "table", "tbody", "thead", "tfoot", "tr", "dl":
+		line := strings.Repeat("#", level) + " " + inner
+		if opt.closedHeading {
+			line += " " + strings.Repeat("#", level)
+		}
+		return line
+	case "table":
+		if opt.pipeTables {
+			return renderHTMLTable(n, opt)
+		}
+		return renderBlock(n, opt)
+	case "p", "div", "section", "article", "main", "center", "header", "footer", "nav", "figure", "figcaption", "tbody", "thead", "tfoot", "tr", "dl":
 		return renderBlock(n, opt)
 	case "blockquote":
 		return prefixLines(renderBlock(n, opt), "> ")
@@ -169,6 +180,33 @@ func renderNode(n *html.Node, opt htmlOpt) string {
 	default:
 		return renderKids(n, opt)
 	}
+}
+
+func renderHTMLTable(n *html.Node, opt htmlOpt) string {
+	var rows [][]string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "tr" {
+			var cells []string
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
+					continue
+				}
+				cell := strings.TrimSpace(renderKids(c, opt))
+				cell = strings.ReplaceAll(cell, "\n", " ")
+				cells = append(cells, cell)
+			}
+			if len(cells) > 0 {
+				rows = append(rows, cells)
+			}
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return strings.TrimRight(markdownTable(rows), "\n")
 }
 
 func renderKids(n *html.Node, opt htmlOpt) string {
