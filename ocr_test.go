@@ -155,3 +155,72 @@ func onePNG() string {
 		`<a:graphic><a:graphicData><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="Image 1"/></pic:nvPicPr>` +
 		`<pic:blipFill><a:blip r:embed="rIdPng"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`
 }
+
+type countCalls struct{ n int }
+
+func (c *countCalls) Recognize(context.Context, markitdown.Image) (string, error) {
+	c.n++
+	return "nope", nil
+}
+
+func TestPDFAndHTMLDoNotRecognize(t *testing.T) {
+	ocr := &countCalls{}
+	_, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(testFile(t, "test.pdf")), MIME: "application/pdf", Filename: "a.pdf", OCR: ocr,
+	})
+	if err != nil || ocr.n != 0 {
+		t.Fatalf("calls %d err %v", ocr.n, err)
+	}
+	htmlDoc := `<p>Hi</p><img src="data:image/png;base64,aaaa">`
+	_, err = markitdown.Extract(context.Background(), markitdown.Request{
+		R: strings.NewReader(htmlDoc), MIME: "text/html", Filename: "a.html", OCR: ocr,
+	})
+	if err != nil || ocr.n != 0 {
+		t.Fatalf("calls %d err %v", ocr.n, err)
+	}
+}
+
+type ordinaryCancel struct{}
+
+func (ordinaryCancel) Recognize(context.Context, markitdown.Image) (string, error) {
+	return "", context.Canceled
+}
+
+func TestOCROrdinaryCancelSkipsImage(t *testing.T) {
+	body := ocrFile(t, "docx_image_start.docx")
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(body), Filename: "a.docx", OCR: ordinaryCancel{},
+	})
+	if err != nil || !res.Partial || strings.Contains(res.Text, "*[Image OCR]") {
+		t.Fatalf("%#v %v", res, err)
+	}
+}
+
+type parentCancel struct{ cancel context.CancelFunc }
+
+func (p parentCancel) Recognize(ctx context.Context, _ markitdown.Image) (string, error) {
+	p.cancel()
+	return "", ctx.Err()
+}
+
+func TestOCRParentCancelFailsExtract(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := markitdown.Extract(ctx, markitdown.Request{
+		R: bytes.NewReader(ocrFile(t, "docx_image_start.docx")), Filename: "a.docx",
+		OCR: parentCancel{cancel: cancel},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+}
+
+func TestZIPPassesOCRToMember(t *testing.T) {
+	buf := zipEntries(t, []zipEntry{{"pic.docx", string(ocrFile(t, "docx_image_start.docx"))}})
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(buf), MIME: "application/zip", Filename: "a.zip",
+		OCR: fixedOCR{text: ocrMock},
+	})
+	if err != nil || !strings.Contains(res.Text, "MOCK\\_OCR\\_TEXT\\_12345") {
+		t.Fatalf("%v\n%s", err, res.Text)
+	}
+}
