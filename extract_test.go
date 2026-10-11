@@ -63,8 +63,6 @@ func TestOctetStreamUsesExtension(t *testing.T) {
 
 func TestUnsupported(t *testing.T) {
 	cases := []struct{ mime, name string }{
-		{"", "a.xls"},
-		{"application/vnd.ms-excel", "a.xlsx"},
 		{"text/html", "a.txt"},
 		{"", "a.html"},
 		{"application/octet-stream", "a.bin"},

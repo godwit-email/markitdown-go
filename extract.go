@@ -28,6 +28,8 @@ const (
 	KindPPTX = "pptx"
 	KindPDF  = "pdf"
 	KindZIP  = "zip"
+	KindXLS  = "xls"
+	KindMSG  = "msg"
 )
 
 var (
@@ -139,6 +141,10 @@ func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, e
 		res, err = convertPPTX(data)
 	case KindPDF:
 		res, err = convertPDF(data)
+	case KindXLS:
+		res, err = convertXLS(data)
+	case KindMSG:
+		res, err = convertMSG(data)
 	case KindZIP:
 		res, err = convertZIP(data, lim)
 	default:
@@ -180,9 +186,13 @@ func kindFromMIME(mt string) (string, bool) {
 		return KindPPTX, true
 	case "application/pdf":
 		return KindPDF, true
+	case "application/vnd.ms-excel", "application/excel":
+		return KindXLS, true
+	case "application/vnd.ms-outlook":
+		return KindMSG, true
 	case "application/zip", "application/x-zip-compressed":
 		return KindZIP, true
-	case "text/html", "application/xhtml+xml", "application/vnd.ms-excel", "application/excel":
+	case "text/html", "application/xhtml+xml":
 		return "", true
 	default:
 		return "", false
@@ -203,6 +213,10 @@ func kindFromExt(filename string) (string, bool) {
 		return KindPPTX, true
 	case ".pdf":
 		return KindPDF, true
+	case ".xls":
+		return KindXLS, true
+	case ".msg":
+		return KindMSG, true
 	case ".zip":
 		return KindZIP, true
 	default:

@@ -24,7 +24,15 @@ func convertDOCX(data []byte) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Text: strings.TrimSpace(renderDocx(root, styles))}, nil
+	text := renderDocx(root, styles)
+	if b, err := readZip(zr, "word/comments.xml"); err == nil {
+		if croot, err := parseXML(b); err == nil {
+			if comments := strings.TrimSpace(renderDocx(croot, styles)); comments != "" {
+				text += "\n\n" + comments
+			}
+		}
+	}
+	return Result{Text: strings.TrimSpace(text)}, nil
 }
 
 func headingStyles(root *xnode) map[string]int {
@@ -79,7 +87,27 @@ func renderDocx(root *xnode, styles map[string]int) string {
 	var walk func(*xnode)
 	walk = func(n *xnode) {
 		switch n.local {
-		case "txbxContent", "drawing", "pict", "object":
+		case "drawing", "pict", "object":
+			collectTxbx(n, walk)
+			return
+		case "txbxContent":
+			for _, c := range n.kids {
+				walk(c)
+			}
+			return
+		case "oMathPara":
+			if s := mathLatex(n); s != "" {
+				b.WriteString("$$")
+				b.WriteString(s)
+				b.WriteString("$$\n\n")
+			}
+			return
+		case "oMath":
+			if s := mathLatex(n); s != "" {
+				b.WriteString("$")
+				b.WriteString(s)
+				b.WriteString("$\n\n")
+			}
 			return
 		case "tbl":
 			if table := renderDocxTable(n); table != "" {
@@ -102,7 +130,7 @@ func renderDocx(root *xnode, styles map[string]int) string {
 }
 
 func renderParagraph(p *xnode, styles map[string]int) string {
-	text := paragraphText(p)
+	text := inlineContent(p)
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
@@ -126,18 +154,35 @@ func paragraphStyle(p *xnode) string {
 	return ""
 }
 
-func paragraphText(p *xnode) string {
+func paragraphText(p *xnode) string { return inlineContent(p) }
+
+func inlineContent(n *xnode) string {
 	var b strings.Builder
 	var walk func(*xnode)
 	walk = func(n *xnode) {
 		switch n.local {
-		case "txbxContent", "drawing", "pict", "object", "tbl":
-			return
-		case "t":
-			b.WriteString(n.text)
+		case "oMathPara":
+			if s := mathLatex(n); s != "" {
+				b.WriteString("$$")
+				b.WriteString(s)
+				b.WriteString("$$")
+			}
+		case "oMath":
+			if s := mathLatex(n); s != "" {
+				b.WriteString("$")
+				b.WriteString(s)
+				b.WriteString("$")
+			}
+		case "drawing", "pict", "object":
+			collectTxbx(n, walk)
+		case "txbxContent":
 			for _, c := range n.kids {
 				walk(c)
 			}
+		case "tbl":
+			return
+		case "t", "delText":
+			b.WriteString(n.text)
 		case "tab":
 			b.WriteByte('\t')
 		case "br", "cr":
@@ -148,8 +193,20 @@ func paragraphText(p *xnode) string {
 			}
 		}
 	}
-	walk(p)
+	walk(n)
 	return b.String()
+}
+
+func collectTxbx(n *xnode, walk func(*xnode)) {
+	if n.local == "txbxContent" {
+		for _, c := range n.kids {
+			walk(c)
+		}
+		return
+	}
+	for _, c := range n.kids {
+		collectTxbx(c, walk)
+	}
 }
 
 func renderDocxTable(tbl *xnode) string {
