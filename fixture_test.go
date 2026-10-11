@@ -342,8 +342,11 @@ func TestZIPMemberDOCXIsNotUnpacked(t *testing.T) {
 	if strings.Contains(res.Text, "[Content_Types].xml") {
 		t.Fatal("docx was unpacked as zip")
 	}
-	if !res.Partial {
-		t.Fatal("html and jpg members should mark partial")
+	if res.Partial {
+		t.Fatal("docx, html, and jpg members should convert")
+	}
+	if !strings.Contains(res.Text, "ImageSize: 1615x1967") {
+		t.Fatal("jpg member missing")
 	}
 }
 

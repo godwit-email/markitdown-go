@@ -21,18 +21,22 @@ const (
 	maxZipFiles        = 100
 	maxZipUncompressed = 25 << 20
 
-	KindText = "text"
-	KindCSV  = "csv"
-	KindXLSX = "xlsx"
-	KindDOCX = "docx"
-	KindPPTX = "pptx"
-	KindPDF  = "pdf"
-	KindZIP  = "zip"
-	KindXLS  = "xls"
-	KindMSG  = "msg"
-	KindHTML = "html"
-	KindRSS  = "rss"
-	KindEPUB = "epub"
+	KindText    = "text"
+	KindCSV     = "csv"
+	KindXLSX    = "xlsx"
+	KindDOCX    = "docx"
+	KindPPTX    = "pptx"
+	KindPDF     = "pdf"
+	KindZIP     = "zip"
+	KindXLS     = "xls"
+	KindMSG     = "msg"
+	KindHTML    = "html"
+	KindRSS     = "rss"
+	KindEPUB    = "epub"
+	KindIPYNB   = "ipynb"
+	KindImage   = "image"
+	KindAudio   = "audio"
+	KindYouTube = "youtube"
 )
 
 var (
@@ -55,6 +59,7 @@ type budget struct {
 	uncompressed *int64
 	keepData     bool
 	baseURL      string
+	pageURL      string
 }
 
 // Extract reads r up to 25 MB and dispatches on MIME, then on the file name
@@ -62,6 +67,17 @@ type budget struct {
 // cap; zero means 2 MB. Output past the cap is truncated and Partial is set.
 // ErrUnsupported is not a failure of the file contents.
 func Extract(r io.Reader, mimeType, filename string, maxOut int) (Result, error) {
+	return extract(r, mimeType, filename, "", maxOut)
+}
+
+// ExtractPage is Extract for a document whose page URL is known. A YouTube
+// watch, shorts, embed, or youtu.be URL selects that converter. The package
+// still does not fetch the URL.
+func ExtractPage(r io.Reader, mimeType, filename, pageURL string, maxOut int) (Result, error) {
+	return extract(r, mimeType, filename, pageURL, maxOut)
+}
+
+func extract(r io.Reader, mimeType, filename, pageURL string, maxOut int) (Result, error) {
 	data, err := readLimited(r)
 	if err != nil {
 		return Result{}, err
@@ -72,6 +88,7 @@ func Extract(r io.Reader, mimeType, filename string, maxOut int) (Result, error)
 		depth:        maxZipDepth,
 		files:        &files,
 		uncompressed: &left,
+		pageURL:      pageURL,
 	})
 	if err != nil {
 		return Result{}, err
@@ -127,8 +144,16 @@ func cutUTF8(s string, maxOut int) string {
 
 func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, error) {
 	kind, charset, ok := detect(mimeType, filename)
+	if !ok && strings.TrimSpace(mimeType) == "" && strings.TrimSpace(filename) == "" && len(data) > 0 && utf8.Valid(data) {
+		// No MIME and no name: keep valid UTF-8, including a character that
+		// straddles the 64 KiB charset sample. Binary stays unsupported.
+		kind, ok = KindText, true
+	}
 	if !ok {
 		return Result{}, ErrUnsupported
+	}
+	if kind == KindHTML && htmlLike(mimeType, filename) && youtubeVideoID(lim.pageURL) != "" {
+		kind = KindYouTube
 	}
 	var (
 		res Result
@@ -136,7 +161,12 @@ func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, e
 	)
 	switch kind {
 	case KindText:
-		res, err = convertText(data, charset)
+		if notebookInput(data, charset, mimeType, filename) {
+			res, err = convertIPYNB(data, charset)
+			kind = KindIPYNB
+		} else {
+			res, err = convertText(data, charset)
+		}
 	case KindCSV:
 		res, err = convertCSV(data, charset)
 	case KindXLSX:
@@ -159,6 +189,14 @@ func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, e
 		res, err = convertEPUB(data, lim.keepData)
 	case KindZIP:
 		res, err = convertZIP(data, filename, lim)
+	case KindIPYNB:
+		res, err = convertIPYNB(data, charset)
+	case KindYouTube:
+		res, err = convertYouTube(data, charset)
+	case KindImage:
+		res, err = convertImage(data)
+	case KindAudio:
+		res, err = convertAudio(data, filename, mimeType)
 	default:
 		return Result{}, ErrUnsupported
 	}
@@ -210,6 +248,10 @@ func kindFromMIME(mt string) (string, bool) {
 		return KindRSS, true
 	case "application/epub+zip", "application/epub", "application/x-epub+zip":
 		return KindEPUB, true
+	case "image/jpeg", "image/png":
+		return KindImage, true
+	case "audio/x-wav", "audio/wav", "audio/mpeg", "audio/mp4", "video/mp4":
+		return KindAudio, true
 	default:
 		return "", false
 	}
@@ -241,6 +283,12 @@ func kindFromExt(filename string) (string, bool) {
 		return KindEPUB, true
 	case ".zip":
 		return KindZIP, true
+	case ".ipynb":
+		return KindIPYNB, true
+	case ".jpg", ".jpeg", ".png":
+		return KindImage, true
+	case ".wav", ".mp3", ".m4a", ".mp4":
+		return KindAudio, true
 	default:
 		return "", false
 	}

@@ -68,7 +68,7 @@ func findEncoding(charset string) encoding.Encoding {
 
 func isUTF8Charset(charset string) bool {
 	switch strings.ToLower(charset) {
-	case "utf-8", "utf8", "ascii", "us-ascii", "ansi_x3.4-1968":
+	case "utf-8", "utf8", "utf-8-sig", "ascii", "us-ascii", "ansi_x3.4-1968":
 		return true
 	default:
 		return false
