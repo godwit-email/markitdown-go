@@ -11,6 +11,7 @@ import (
 	"github.com/godwit-email/markitdown-go/csv"
 	"github.com/godwit-email/markitdown-go/docx"
 	"github.com/godwit-email/markitdown-go/html"
+	"github.com/godwit-email/markitdown-go/pptx"
 	"github.com/godwit-email/markitdown-go/text"
 	"github.com/godwit-email/markitdown-go/xls"
 	"github.com/godwit-email/markitdown-go/xlsx"
@@ -107,6 +108,22 @@ func TestPythonParity(t *testing.T) {
 		{
 			name: "docx/rlink", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 			filename: "rlink.docx", file: "rlink.docx", direct: docx.Extract,
+		},
+		{
+			name: "pptx/fixture", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			filename: "test.pptx", file: "test.pptx", direct: pptx.Extract,
+		},
+		{
+			name: "pptx/svg", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			filename: "test_svg_no_fallback.pptx", file: "test_svg_no_fallback.pptx", direct: pptx.Extract,
+		},
+		{
+			name: "pptx/empty-body", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			filename: "pptx_empty_body_run.pptx", file: "pptx_empty_body_run.pptx", direct: pptx.Extract,
+		},
+		{
+			name: "pptx/notes-empty", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			filename: "pptx_notes_empty_run.pptx", file: "pptx_notes_empty_run.pptx", direct: pptx.Extract,
 		},
 	}
 	for _, tc := range cases {

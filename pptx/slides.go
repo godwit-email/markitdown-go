@@ -114,8 +114,33 @@ func renderSlide(root *xmlsafe.Node, env slideEnv) string {
 	return b.String()
 }
 
+func shapePos(n *xmlsafe.Node) (y, x int64) {
+	off := xmlsafe.FindFirst(n, "off")
+	if off == nil {
+		return -1 << 62, -1 << 62
+	}
+	y, _ = strconv.ParseInt(off.Attr["y"], 10, 64)
+	x, _ = strconv.ParseInt(off.Attr["x"], 10, 64)
+	return y, x
+}
+
 func writeShapes(b *strings.Builder, n *xmlsafe.Node, env slideEnv) {
+	var shapes []*xmlsafe.Node
 	for _, c := range n.Kids {
+		switch c.Local {
+		case "sp", "cxnSp", "pic", "grpSp", "graphicFrame":
+			shapes = append(shapes, c)
+		}
+	}
+	sort.SliceStable(shapes, func(i, j int) bool {
+		yi, xi := shapePos(shapes[i])
+		yj, xj := shapePos(shapes[j])
+		if yi != yj {
+			return yi < yj
+		}
+		return xi < xj
+	})
+	for _, c := range shapes {
 		switch c.Local {
 		case "sp", "cxnSp":
 			writeShape(b, c)
@@ -159,6 +184,9 @@ func appendBlock(b *strings.Builder, block string) {
 }
 
 func writePic(b *strings.Builder, pic *xmlsafe.Node, env slideEnv) {
+	if b.Len() > 0 && strings.HasSuffix(b.String(), "\n") && !strings.HasSuffix(b.String(), "\n\n") {
+		b.WriteByte('\n')
+	}
 	alt := cleanPictureAlt(picAlt(pic))
 	rid := picEmbed(pic)
 	if env.ocr != nil && rid != "" && env.zr != nil {
@@ -288,8 +316,22 @@ func picEmbed(pic *xmlsafe.Node) string {
 	return ""
 }
 
+func shapeText(sp *xmlsafe.Node) string {
+	body := xmlsafe.FindFirst(sp, "txBody")
+	if body == nil {
+		return strings.TrimSpace(xmlsafe.LocalText(sp, "t"))
+	}
+	var lines []string
+	for _, p := range xmlsafe.Direct(body, "p") {
+		if t := strings.TrimSpace(xmlsafe.LocalText(p, "t")); t != "" {
+			lines = append(lines, t)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 func writeShape(b *strings.Builder, sp *xmlsafe.Node) {
-	text := strings.TrimSpace(xmlsafe.LocalText(sp, "t"))
+	text := shapeText(sp)
 	switch phType(sp) {
 	case "title", "ctrTitle":
 		if text != "" {
@@ -298,15 +340,18 @@ func writeShape(b *strings.Builder, sp *xmlsafe.Node) {
 	default:
 		if text != "" {
 			writeSlideLine(b, text)
+		} else if xmlsafe.FindFirst(sp, "txBody") != nil {
+			if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+				b.WriteByte('\n')
+			}
+			b.WriteByte('\n')
 		}
 	}
 }
 
 func writeSlideLine(b *strings.Builder, line string) {
-	if b.Len() > 0 && !strings.HasSuffix(b.String(), "-->\n") {
-		if !strings.HasSuffix(b.String(), "\n\n") {
-			b.WriteByte('\n')
-		}
+	if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+		b.WriteByte('\n')
 	}
 	b.WriteString(line)
 	b.WriteByte('\n')
