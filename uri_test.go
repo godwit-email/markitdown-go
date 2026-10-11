@@ -271,8 +271,7 @@ func TestContentDispositionFilename(t *testing.T) {
 }
 
 func TestModuleURIVectors(t *testing.T) {
-	// module_vectors.json is the must_include lists from
-	// packages/markitdown/tests/_test_vectors.py.
+	// module_vectors.json holds the must_include lists these URI tests check.
 	raw, err := os.ReadFile("module_vectors.json")
 	if err != nil {
 		t.Fatal(err)
