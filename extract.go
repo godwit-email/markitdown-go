@@ -30,6 +30,7 @@ const (
 	KindZIP  = "zip"
 	KindXLS  = "xls"
 	KindMSG  = "msg"
+	KindHTML = "html"
 )
 
 var (
@@ -43,6 +44,7 @@ type Result struct {
 	Text    string
 	Kind    string
 	Partial bool
+	Title   string
 }
 
 type budget struct {
@@ -145,6 +147,8 @@ func convertBytes(data []byte, mimeType, filename string, lim budget) (Result, e
 		res, err = convertXLS(data)
 	case KindMSG:
 		res, err = convertMSG(data)
+	case KindHTML:
+		res, err = convertHTML(data, false)
 	case KindZIP:
 		res, err = convertZIP(data, lim)
 	default:
@@ -193,7 +197,7 @@ func kindFromMIME(mt string) (string, bool) {
 	case "application/zip", "application/x-zip-compressed":
 		return KindZIP, true
 	case "text/html", "application/xhtml+xml":
-		return "", true
+		return KindHTML, true
 	default:
 		return "", false
 	}
@@ -217,6 +221,8 @@ func kindFromExt(filename string) (string, bool) {
 		return KindXLS, true
 	case ".msg":
 		return KindMSG, true
+	case ".html", ".htm":
+		return KindHTML, true
 	case ".zip":
 		return KindZIP, true
 	default:
