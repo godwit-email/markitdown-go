@@ -142,6 +142,57 @@ func flatePDF(t *testing.T, plain []byte) []byte {
 	return b.Bytes()
 }
 
+func TestPDFBrokenPageIsPartial(t *testing.T) {
+	raw := twoPagePDF(t, []byte("BT (Hello) Tj ET\n"), []byte("BT Tj ET\n"))
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(raw), MIME: "application/pdf", Filename: "broken.pdf",
+	})
+	if err != nil || !res.Partial || !strings.Contains(res.Text, "Hello") {
+		t.Fatalf("%#v %v", res, err)
+	}
+}
+
+func twoPagePDF(t *testing.T, good, bad []byte) []byte {
+	t.Helper()
+	compress := func(plain []byte) []byte {
+		t.Helper()
+		var comp bytes.Buffer
+		zw := zlib.NewWriter(&comp)
+		if _, err := zw.Write(plain); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return comp.Bytes()
+	}
+	s1, s2 := compress(good), compress(bad)
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n")
+	var offsets []int
+	write := func(s string) {
+		offsets = append(offsets, b.Len())
+		b.WriteString(s)
+	}
+	write("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+	write("2 0 obj\n<< /Type /Pages /Count 2 /Kids [3 0 R 5 0 R] >>\nendobj\n")
+	write("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>\nendobj\n")
+	write(fmt.Sprintf("4 0 obj\n<< /Length %d /Filter /FlateDecode >>\nstream\n", len(s1)))
+	b.Write(s1)
+	b.WriteString("\nendstream\nendobj\n")
+	write("5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>\nendobj\n")
+	write(fmt.Sprintf("6 0 obj\n<< /Length %d /Filter /FlateDecode >>\nstream\n", len(s2)))
+	b.Write(s2)
+	b.WriteString("\nendstream\nendobj\n")
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(offsets)+1)
+	for _, off := range offsets {
+		fmt.Fprintf(&b, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets)+1, xref)
+	return b.Bytes()
+}
+
 func TestPDFContentStreamBudget(t *testing.T) {
 	small, err := markitdown.Extract(context.Background(), markitdown.Request{
 		R: bytes.NewReader(flatePDF(t, []byte("BT (A) Tj ET\n"))), MIME: "application/pdf", Filename: "a.pdf",

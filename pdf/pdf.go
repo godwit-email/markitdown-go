@@ -35,6 +35,7 @@ func convertPDF(data []byte) (markitdown.Result, error) {
 		anyWide = anyWide || wide[i-1]
 	}
 	var b strings.Builder
+	partial := false
 	for i := 1; i <= n; i++ {
 		p := r.Page(i)
 		if p.V.IsNull() {
@@ -43,7 +44,11 @@ func convertPDF(data []byte) (markitdown.Result, error) {
 		// A prose page next to a wide-column page is what pdfplumber extracts
 		// with a 3pt word gap, so those words stay glued.
 		text, err := plainText(p, anyWide && !wide[i-1])
-		if err != nil || strings.TrimSpace(text) == "" {
+		if err != nil {
+			partial = true
+			continue
+		}
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
 		if b.Len() > 0 {
@@ -53,9 +58,9 @@ func convertPDF(data []byte) (markitdown.Result, error) {
 	}
 	text := strings.Trim(b.String(), "\n")
 	if strings.TrimSpace(text) == "" {
-		return markitdown.Result{Partial: true}, nil
+		partial = true
 	}
-	return markitdown.Result{Text: text}, nil
+	return markitdown.Result{Text: text, Partial: partial}, nil
 }
 
 func contentStreams(r *pdfdoc.Reader) (err error) {
