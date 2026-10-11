@@ -11,6 +11,7 @@ import (
 	"github.com/godwit-email/markitdown-go/csv"
 	"github.com/godwit-email/markitdown-go/html"
 	"github.com/godwit-email/markitdown-go/text"
+	"github.com/godwit-email/markitdown-go/xls"
 	"github.com/godwit-email/markitdown-go/xlsx"
 )
 
@@ -81,6 +82,14 @@ func TestPythonParity(t *testing.T) {
 		{
 			name: "xlsx/fixture", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 			filename: "test.xlsx", file: "test.xlsx", direct: xlsx.Extract,
+		},
+		{
+			name: "xls/fixture", mediaType: "application/vnd.ms-excel",
+			filename: "test.xls", file: "test.xls", direct: xls.Extract,
+		},
+		{
+			name: "xls/excel-mime", mediaType: "application/excel",
+			filename: "test.xls", file: "test.xls", direct: xls.Extract,
 		},
 	}
 	for _, tc := range cases {

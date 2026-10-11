@@ -61,13 +61,33 @@ func convertXLS(data []byte) (markitdown.Result, error) {
 		}
 		b.WriteString("## ")
 		b.WriteString(sheet.Name)
-		b.WriteString("\n\n")
-		b.WriteString(table.Markdown(rows))
+		b.WriteByte('\n')
+		b.WriteString(table.Markdown(trimEmptyCols(rows)))
 		if stop {
 			break
 		}
 	}
 	return markitdown.Result{Text: strings.TrimSpace(b.String()), Partial: partial}, nil
+}
+
+func trimEmptyCols(rows [][]string) [][]string {
+	width := 0
+	for _, row := range rows {
+		for i := len(row) - 1; i >= 0; i-- {
+			if strings.TrimSpace(row[i]) != "" {
+				if i+1 > width {
+					width = i + 1
+				}
+				break
+			}
+		}
+	}
+	for i, row := range rows {
+		if len(row) > width {
+			rows[i] = row[:width]
+		}
+	}
+	return rows
 }
 
 func xlsRow(sheet *xls.WorkSheet, i int) (cols []string, ok bool) {
