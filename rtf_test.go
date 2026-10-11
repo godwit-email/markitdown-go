@@ -8,7 +8,7 @@ import (
 )
 
 func TestSamplePluginRTF(t *testing.T) {
-	body, err := os.ReadFile("packages/markitdown-sample-plugin/tests/test_files/test.rtf")
+	body, err := os.ReadFile("testdata/test.rtf")
 	if err != nil {
 		t.Fatal(err)
 	}

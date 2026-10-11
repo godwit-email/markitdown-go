@@ -83,6 +83,9 @@ func convertXLSX(data []byte, lim budget) (Result, error) {
 			break
 		}
 	}
+	if ocr != nil && ocr.partial {
+		partial = true
+	}
 	return Result{Text: strings.TrimSpace(b.String()), Partial: partial}, nil
 }
 

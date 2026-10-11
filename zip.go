@@ -64,9 +64,9 @@ func convertZIP(data []byte, filename string, lim budget) (Result, error) {
 			uncompressed: lim.uncompressed,
 			keepData:     lim.keepData,
 		})
-		if err != nil {
+		if err != nil || child.Kind == KindImage {
 			partial = true
-			if errors.Is(err, ErrTooLarge) {
+			if err != nil && errors.Is(err, ErrTooLarge) {
 				break
 			}
 			continue

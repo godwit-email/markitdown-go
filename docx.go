@@ -54,7 +54,7 @@ func convertDOCX(data []byte, lim budget) (Result, error) {
 			}
 		}
 	}
-	return Result{Text: strings.TrimSpace(text)}, nil
+	return Result{Text: strings.TrimSpace(text), Partial: ctx.ocr != nil && ctx.ocr.partial}, nil
 }
 
 func headingStyles(root *xnode) map[string]int {

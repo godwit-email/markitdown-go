@@ -69,9 +69,10 @@ func (s *LLMVisionOCR) ExtractText(img OCRImage) (OCRResult, error) {
 }
 
 type ocrSession struct {
-	svc   OCRService
-	cache map[[32]byte]ocrHit
-	err   error
+	svc     OCRService
+	cache   map[[32]byte]ocrHit
+	err     error
+	partial bool
 }
 
 type ocrHit struct {
@@ -96,7 +97,9 @@ func (s *ocrSession) markdown(img OCRImage) (string, bool) {
 	}
 	res, err := s.svc.ExtractText(img)
 	if err != nil {
-		s.err = err
+		// ExtractText's error skips this image. It does not fail the document.
+		s.partial = true
+		s.cache[key] = ocrHit{}
 		return "", false
 	}
 	if res.Error != "" || strings.TrimSpace(res.Text) == "" {

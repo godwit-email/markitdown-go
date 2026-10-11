@@ -335,7 +335,7 @@ func checkVector(t *testing.T, v vector, dataURI bool) {
 		uri := "data:" + v.Mimetype + ";base64," + base64.StdEncoding.EncodeToString(body)
 		res, err = ConvertURI(uri, 0, Options{})
 	} else {
-		path := filepath.Join("packages/markitdown/tests/test_files", v.Filename)
+		path := filepath.Join("testdata", v.Filename)
 		res, err = ConvertURI(pathToFileURI(path), 0, Options{})
 	}
 	if err != nil {

@@ -114,9 +114,9 @@ func TestOCRErrorKeepsNativeImage(t *testing.T) {
 	if res.Text != native.Text || strings.Contains(res.Text, "*[Image OCR]") {
 		t.Fatalf("native not kept\n%s", res.Text)
 	}
-	_, err = ExtractOptions(bytes.NewReader(body), "", name, 0, Options{OCR: panicOCR{err: errors.New("vision down")}})
-	if err == nil || err.Error() != "vision down" {
-		t.Fatal(err)
+	res, err = ExtractOptions(bytes.NewReader(body), "", name, 0, Options{OCR: panicOCR{err: errors.New("vision down")}})
+	if err != nil || !res.Partial || res.Text != native.Text || strings.Contains(res.Text, "*[Image OCR]") {
+		t.Fatalf("partial %v err %v\n%s", res.Partial, err, res.Text)
 	}
 }
 
@@ -158,7 +158,7 @@ func (c countOCR) ExtractText(OCRImage) (OCRResult, error) {
 
 func ocrFile(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile("packages/markitdown-ocr/tests/ocr_test_data/" + name)
+	b, err := os.ReadFile("testdata/ocr/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}

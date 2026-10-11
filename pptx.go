@@ -49,7 +49,7 @@ func convertPPTX(data []byte, lim budget) (Result, error) {
 			b.WriteString(notes)
 		}
 	}
-	return Result{Text: strings.TrimSpace(b.String())}, nil
+	return Result{Text: strings.TrimSpace(b.String()), Partial: ocr != nil && ocr.partial}, nil
 }
 
 func renderChart(env slideEnv, chartEl *xnode) string {

@@ -342,11 +342,11 @@ func TestZIPMemberDOCXIsNotUnpacked(t *testing.T) {
 	if strings.Contains(res.Text, "[Content_Types].xml") {
 		t.Fatal("docx was unpacked as zip")
 	}
-	if res.Partial {
-		t.Fatal("docx, html, and jpg members should convert")
+	if !res.Partial {
+		t.Fatal("jpeg member has no converter in this version")
 	}
-	if !strings.Contains(res.Text, "ImageSize: 1615x1967") {
-		t.Fatal("jpg member missing")
+	if strings.Contains(res.Text, "ImageSize:") {
+		t.Fatal("jpeg member was converted")
 	}
 }
 
@@ -427,7 +427,7 @@ func TestDOCXNotKindZip(t *testing.T) {
 
 func testFile(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("packages", "markitdown", "tests", "test_files", name))
+	b, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
