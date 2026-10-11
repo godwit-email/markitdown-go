@@ -118,7 +118,7 @@ func countStream(v pdfdoc.Value, used *int, max int) error {
 	}
 }
 
-// shortcut: no table markdown. TestPythonParity/pdf locks text-layer fragments.
+// shortcut: no table markdown. TestPDFFullOutput locks text-layer fragments.
 func plainText(p pdfdoc.Page, glue bool) (text string, err error) {
 	defer func() {
 		if recover() != nil {
