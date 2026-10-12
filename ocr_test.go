@@ -11,7 +11,7 @@ import (
 )
 
 const ocrMock = "MOCK_OCR_TEXT_12345"
-const ocrBlock = "*[Image OCR]  \nMOCK\\_OCR\\_TEXT\\_12345  \n[End OCR]*"
+const ocrBlock = "*[Image OCR]\nMOCK\\_OCR\\_TEXT\\_12345\n[End OCR]*"
 
 type fixedOCR struct{ text string }
 
@@ -33,9 +33,9 @@ func TestOCROfficeFixtures(t *testing.T) {
 		{"xlsx_image_end.xlsx", "## Sheet\n| Financial Summary | Unnamed: 1 |\n| --- | --- |\n| Total Revenue | $500,000 |\n| Total Expenses | $300,000 |\n| Net Profit | $200,000 |\n| NaN | NaN |\n| NaN | NaN |\n| NaN | NaN |\n| NaN | NaN |\n| NaN | NaN |\n| Signature: | NaN |\n\n### Images in this sheet:\n\n" + ocrBlock + "\n\n## Budget\n| Budget Allocation | Unnamed: 1 |\n| --- | --- |\n| Marketing | $100,000 |\n| R&D | $150,000 |\n| Operations | $50,000 |\n| NaN | NaN |\n| NaN | NaN |\n| NaN | NaN |\n| NaN | NaN |\n| NaN | NaN |\n| Approved: | NaN |\n\n### Images in this sheet:\n\n" + ocrBlock},
 		{"xlsx_multiple_images.xlsx", "## Overview\n| Dashboard |\n| --- |\n| Status: Active |\n| NaN |\n| NaN |\n| NaN |\n| NaN |\n| Performance Summary |\n\n### Images in this sheet:\n\n" + ocrBlock + "\n\n" + ocrBlock + "\n\n## Details\n| Detailed Metrics |\n| --- |\n| System Health |\n\n### Images in this sheet:\n\n" + ocrBlock + "\n\n## Summary\n| Quarter Summary |\n| --- |\n| Overall Performance |\n\n### Images in this sheet:\n\n" + ocrBlock},
 		{"xlsx_complex_layout.xlsx", "## Complex Report\n| Annual Report 2024 | Unnamed: 1 |\n| --- | --- |\n| NaN | NaN |\n| Month | Sales |\n| Jan | 1000 |\n| Feb | 1200 |\n| NaN | NaN |\n| Total | 2200 |\n\n### Images in this sheet:\n\n" + ocrBlock + "\n\n" + ocrBlock + "\n\n## Customers\n| Customer Metrics | Unnamed: 1 |\n| --- | --- |\n| NaN | NaN |\n| New Customers | 250 |\n| Retention Rate | 92% |\n\n### Images in this sheet:\n\n" + ocrBlock + "\n\n## Regions\n| Regional Breakdown | Unnamed: 1 |\n| --- | --- |\n| NaN | NaN |\n| Region | Revenue |\n| North | $800K |\n| South | $600K |\n\n### Images in this sheet:\n\n" + ocrBlock},
-		{"pptx_image_start.pptx", "<!-- Slide number: 1 -->\n# Welcome\n\n\n" + ocrBlock},
-		{"pptx_image_middle.pptx", "<!-- Slide number: 1 -->\n# Introduction\n\n<!-- Slide number: 2 -->\n# Architecture\n\n\n" + ocrBlock + "\n\n<!-- Slide number: 3 -->\n# Conclusion"},
-		{"pptx_image_end.pptx", "<!-- Slide number: 1 -->\n# Presentation\n\n<!-- Slide number: 2 -->\n# Thank You\n\n\n" + ocrBlock},
+		{"pptx_image_start.pptx", "<!-- Slide number: 1 -->\n# Welcome\n\n" + ocrBlock},
+		{"pptx_image_middle.pptx", "<!-- Slide number: 1 -->\n# Introduction\n\n<!-- Slide number: 2 -->\n# Architecture\n\n" + ocrBlock + "\n\n<!-- Slide number: 3 -->\n# Conclusion"},
+		{"pptx_image_end.pptx", "<!-- Slide number: 1 -->\n# Presentation\n\n<!-- Slide number: 2 -->\n# Thank You\n\n" + ocrBlock},
 		{"pptx_multiple_images.pptx", "<!-- Slide number: 1 -->\n\n" + ocrBlock + "\n\n" + ocrBlock},
 		{"pptx_complex_layout.pptx", "<!-- Slide number: 1 -->\n# Product Comparison\n\nOur products lead the market\n\n" + ocrBlock},
 	}
@@ -84,7 +84,7 @@ func TestOCRVisionRequestUsesFakeClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.Text, "*[Image OCR]  \nRecognized\\_text  \n[End OCR]*") {
+	if !strings.Contains(out.Text, "*[Image OCR]\nRecognized\\_text\n[End OCR]*") {
 		t.Fatalf("%s", out.Text)
 	}
 }

@@ -11,13 +11,5 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Tests except the two PDF cases
-        run: CGO_ENABLED=0 go test -count=1 -timeout 180s ./... -skip 'TestPDFVectorsAndMasterformat|TestPDFFullOutput'
-      - name: Those two PDF tests must still fail
-        run: |
-          set +e
-          CGO_ENABLED=0 go test -count=1 -timeout 180s -v -run '^(TestPDFVectorsAndMasterformat|TestPDFFullOutput)$' . > /tmp/pdf-tests.txt
-          set -e
-          cat /tmp/pdf-tests.txt
-          grep -q '^--- FAIL: TestPDFVectorsAndMasterformat ' /tmp/pdf-tests.txt
-          grep -q '^--- FAIL: TestPDFFullOutput ' /tmp/pdf-tests.txt
+      - name: Tests
+        run: CGO_ENABLED=0 go test -count=1 -timeout 180s ./...

@@ -55,13 +55,6 @@ func convertDOCX(ctx context.Context, in markitdown.Input) (markitdown.Result, e
 	if dctx.err != nil {
 		return markitdown.Result{}, dctx.err
 	}
-	if b, err := zr.Read("word/comments.xml"); err == nil {
-		if croot, err := xmlsafe.Parse(b); err == nil {
-			if comments := strings.TrimSpace(renderDocx(croot, styles, dctx)); comments != "" {
-				text += "\n\n" + comments
-			}
-		}
-	}
 	return markitdown.Result{Text: strings.TrimSpace(text), Partial: dctx.ocr != nil && dctx.ocr.partial}, nil
 }
 
@@ -268,7 +261,7 @@ func renderDocxTable(tbl *xmlsafe.Node, ctx *docxCtx) string {
 		}
 		rows = append(rows, row)
 	}
-	if ctx != nil && ctx.ocr != nil && len(rows) > 0 {
+	if len(rows) > 0 {
 		rows = append([][]string{make([]string, len(rows[0]))}, rows...)
 	}
 	return table.Markdown(rows)
@@ -396,10 +389,10 @@ func docxRelTarget(zr *ooxml.Package, id string) string {
 func picAlt(n *xmlsafe.Node) string {
 	for _, pr := range xmlsafe.FindAll(n, "cNvPr") {
 		if pr.Attr["descr"] != "" {
-			return pr.Attr["descr"]
+			return strings.ReplaceAll(pr.Attr["descr"], "\n", " ")
 		}
 		if pr.Attr["name"] != "" {
-			return pr.Attr["name"]
+			return strings.ReplaceAll(pr.Attr["name"], "\n", " ")
 		}
 	}
 	return ""

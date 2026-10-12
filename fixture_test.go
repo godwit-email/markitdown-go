@@ -441,6 +441,48 @@ func patchUncompressed(t *testing.T, z []byte, from, to uint32) []byte {
 	return b
 }
 
+func TestZIPChecksumSkipsMember(t *testing.T) {
+	raw := corruptMemberCRC(t, zipEntries(t, []zipEntry{
+		{"keep.txt", "KEEP"},
+		{"bad.txt", "SECRET"},
+		{"tail.txt", "TAIL"},
+	}), "bad.txt")
+	res, err := markitdown.Extract(context.Background(), markitdown.Request{
+		R: bytes.NewReader(raw), MIME: "application/zip", Filename: "bad.zip",
+	})
+	if err != nil || !res.Partial {
+		t.Fatalf("%#v %v", res, err)
+	}
+	if strings.Contains(res.Text, "SECRET") || strings.Contains(res.Text, "bad.txt") {
+		t.Fatalf("%q", res.Text)
+	}
+	if !strings.Contains(res.Text, "KEEP") || !strings.Contains(res.Text, "TAIL") {
+		t.Fatalf("%q", res.Text)
+	}
+}
+
+func corruptMemberCRC(t *testing.T, z []byte, name string) []byte {
+	t.Helper()
+	b := append([]byte(nil), z...)
+	patched := false
+	for i := 0; i+46 <= len(b); i++ {
+		if !bytes.Equal(b[i:i+4], []byte{'P', 'K', 1, 2}) {
+			continue
+		}
+		nameLen := int(binary.LittleEndian.Uint16(b[i+28 : i+30]))
+		if i+46+nameLen > len(b) || string(b[i+46:i+46+nameLen]) != name {
+			continue
+		}
+		crc := binary.LittleEndian.Uint32(b[i+16 : i+20])
+		binary.LittleEndian.PutUint32(b[i+16:i+20], crc^0xffffffff)
+		patched = true
+	}
+	if !patched {
+		t.Fatal("crc not patched")
+	}
+	return b
+}
+
 func TestZIPActualSizeStopsTheArchive(t *testing.T) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

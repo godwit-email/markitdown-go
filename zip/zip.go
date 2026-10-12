@@ -3,7 +3,6 @@ package zip
 import (
 	"archive/zip"
 	"bytes"
-	"compress/flate"
 	"context"
 	"errors"
 	"io"
@@ -105,7 +104,7 @@ func convertZIP(ctx context.Context, in markitdown.Input) (markitdown.Result, er
 			continue
 		}
 		files--
-		rc, err := memberReader(f)
+		rc, err := f.Open()
 		if err != nil {
 			partial = true
 			continue
@@ -114,6 +113,10 @@ func convertZIP(ctx context.Context, in markitdown.Input) (markitdown.Result, er
 		rc.Close()
 		if readErr != nil {
 			partial = true
+			// Declared size was smaller than the bytes actually produced.
+			if errors.Is(readErr, zip.ErrFormat) {
+				break
+			}
 			continue
 		}
 		if tooBig {
@@ -159,24 +162,6 @@ func convertZIP(ctx context.Context, in markitdown.Input) (markitdown.Result, er
 	return markitdown.Result{Text: text, Partial: partial}, nil
 }
 
-// memberReader decompresses without the archive/zip checksum cap.
-// That cap returns an error once output passes the declared size, so a
-// member that lies about its size never shows it overran the budget.
-func memberReader(f *zip.File) (io.ReadCloser, error) {
-	raw, err := f.OpenRaw()
-	if err != nil {
-		return nil, err
-	}
-	switch f.Method {
-	case zip.Store:
-		return io.NopCloser(raw), nil
-	case zip.Deflate:
-		return flate.NewReader(raw), nil
-	default:
-		return f.Open()
-	}
-}
-
 func readMember(r io.Reader, left *int64) ([]byte, bool, error) {
 	limit := *left + 1
 	if limit < 1 {
@@ -194,12 +179,7 @@ func readMember(r io.Reader, left *int64) ([]byte, bool, error) {
 }
 
 func safeMember(name string) (display, base string) {
-	name = strings.ReplaceAll(name, "\\", "/")
-	base = path.Base(name)
-	display = path.Clean(name)
-	display = strings.TrimPrefix(display, "/")
-	if display == ".." || strings.HasPrefix(display, "../") {
-		display = base
-	}
+	display = name
+	base = path.Base(strings.ReplaceAll(name, "\\", "/"))
 	return display, base
 }

@@ -179,8 +179,9 @@ func Extract(ctx context.Context, req Request) (Result, error) {
 	if res.Kind == "" {
 		res.Kind = c.Kind()
 	}
-	if text, cut := run.Cut(res.Text, maxOut); cut {
-		res.Text = text
+	text, cut := run.Cut(res.Text, maxOut)
+	res.Text = text
+	if cut {
 		res.Partial = true
 	}
 	return res, nil

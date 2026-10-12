@@ -5,11 +5,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/godwit-email/markitdown-go/internal/run"
-	"github.com/godwit-email/markitdown-go/internal/table"
 	"golang.org/x/net/html"
 )
 
@@ -18,45 +19,13 @@ type Options struct {
 	Base          string
 	ClosedHeading bool
 	PipeTables    bool
+	Inline        bool
 }
 
 func Convert(data []byte, opt Options) (string, error) {
 	doc, err := html.Parse(bytes.NewReader(data))
 	if err != nil {
 		return "", run.Wrap(err)
-	}
-	if wiki := findHTMLID(doc, "mw-content-text"); wiki != nil {
-		title := wikiTitle(doc)
-		body := strings.TrimSpace(renderBlock(wiki, opt))
-		text := body
-		if title != "" {
-			text = "# " + title + "\n\n" + body
-		}
-		return strings.TrimSpace(text), nil
-	}
-	if algos := findClassToken(doc, "b_algo"); len(algos) > 0 {
-		var parts []string
-		for _, algo := range algos {
-			if hasAncestorClass(algo, "b_algo") {
-				continue
-			}
-			rewriteBingLinks(algo)
-			part := strings.TrimSpace(renderBlock(algo, opt))
-			if part == "" {
-				continue
-			}
-			var lines []string
-			for _, line := range strings.Split(part, "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					lines = append(lines, line)
-				}
-			}
-			if len(lines) > 0 {
-				parts = append(parts, strings.Join(lines, "\n"))
-			}
-		}
-		return strings.TrimSpace(strings.Join(parts, "\n\n")), nil
 	}
 	root := findHTMLTag(doc, "body")
 	if root == nil {
@@ -93,37 +62,130 @@ func renderBlock(n *html.Node, opt Options) string {
 		if strings.TrimSpace(s) == "" {
 			return
 		}
-		parts = append(parts, strings.TrimSpace(s))
+		parts = append(parts, s)
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if isHTMLBlock(c) {
 			flush()
-			if s := strings.TrimSpace(renderNode(c, opt)); s != "" {
+			if s := renderNode(c, opt); s != "" {
 				parts = append(parts, s)
 			}
+			continue
+		}
+		if c.Type == html.TextNode && strings.TrimSpace(c.Data) == "" && (isHTMLBlock(c.PrevSibling) || isHTMLBlock(c.NextSibling)) {
 			continue
 		}
 		inline.WriteString(renderNode(c, opt))
 	}
 	flush()
-	return strings.Join(parts, "\n\n")
+	return joinMDChildren(parts)
 }
 
 func isHTMLBlock(n *html.Node) bool {
-	if n.Type != html.ElementNode {
+	if n == nil || n.Type != html.ElementNode {
 		return false
 	}
 	switch n.Data {
-	case "address", "article", "aside", "blockquote", "div", "dl", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody", "thead", "tfoot", "tr", "ul", "center":
+	case "address", "article", "aside", "blockquote", "dd", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody", "thead", "tfoot", "tr", "ul", "center":
 		return true
 	default:
 		return false
 	}
 }
 
+var (
+	nlWS   = regexp.MustCompile(`[\t \r\n]*[\r\n][\t \r\n]*`)
+	spWS   = regexp.MustCompile(`[\t ]+`)
+	cellNL = regexp.MustCompile(`\n+`)
+)
+
+func normalizeText(s string) string {
+	s = nlWS.ReplaceAllString(s, "\n")
+	return spWS.ReplaceAllString(s, " ")
+}
+
+func wrapCode(text string) string {
+	prefix, core, suffix := chompMD(text)
+	if core == "" {
+		return ""
+	}
+	max := 0
+	run := 0
+	for _, r := range core {
+		if r == '`' {
+			run++
+			if run > max {
+				max = run
+			}
+			continue
+		}
+		run = 0
+	}
+	delim := strings.Repeat("`", max+1)
+	if max > 0 {
+		core = " " + core + " "
+	}
+	return prefix + delim + core + delim + suffix
+}
+
+func renderNoscript(n *html.Node, opt Options) string {
+	var raw strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.TextNode {
+			raw.WriteString(c.Data)
+		}
+	}
+	if raw.Len() == 0 {
+		return renderKids(n, opt)
+	}
+	doc, err := html.Parse(strings.NewReader("<html><body><div>" + raw.String() + "</div></body></html>"))
+	if err != nil {
+		return raw.String()
+	}
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "div" {
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				b.WriteString(renderNode(c, opt))
+			}
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return b.String()
+}
+
+func escapeMD(s string) string {
+	s = strings.ReplaceAll(s, "*", `\*`)
+	return strings.ReplaceAll(s, "_", `\_`)
+}
+
+func inPre(n *html.Node) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Type == html.ElementNode && (p.Data == "pre" || p.Data == "code" || p.Data == "kbd" || p.Data == "samp") {
+			return true
+		}
+	}
+	return false
+}
+
 func renderNode(n *html.Node, opt Options) string {
 	if n.Type == html.TextNode {
-		return strings.ReplaceAll(n.Data, "\t", " ")
+		if inPre(n) {
+			return n.Data
+		}
+		s := normalizeText(n.Data)
+		if isHTMLBlock(n.PrevSibling) || (n.PrevSibling == nil && isHTMLBlock(n.Parent)) {
+			s = strings.TrimLeftFunc(s, unicode.IsSpace)
+		}
+		if isHTMLBlock(n.NextSibling) || (n.NextSibling == nil && isHTMLBlock(n.Parent)) {
+			s = strings.TrimRightFunc(s, unicode.IsSpace)
+		}
+		return escapeMD(s)
 	}
 	if n.Type != html.ElementNode {
 		return renderKids(n, opt)
@@ -132,35 +194,98 @@ func renderNode(n *html.Node, opt Options) string {
 		opt.Base = resolveURL(opt.Base, base)
 	}
 	switch n.Data {
-	case "script", "style", "noscript", "svg", "head":
+	case "noscript":
+		return renderNoscript(n, opt)
+	case "script", "style", "svg", "head":
 		return ""
+	case "input":
+		if strings.EqualFold(attr(n, "type"), "checkbox") {
+			if hasAttr(n, "checked") {
+				return "[x] "
+			}
+			return "[ ] "
+		}
+		return ""
+	case "sup", "sub":
+		_, core, _ := chompMD(renderKids(n, opt))
+		return core
+	case "dt":
+		text := strings.Join(strings.Fields(renderKids(n, opt)), " ")
+		if opt.Inline {
+			return " " + text + " "
+		}
+		if text == "" {
+			return "\n"
+		}
+		return "\n\n" + text + "\n"
+	case "dd":
+		text := strings.TrimSpace(renderKids(n, opt))
+		if opt.Inline {
+			return " " + text + " "
+		}
+		if text == "" {
+			return "\n"
+		}
+		var b strings.Builder
+		for i, line := range strings.Split(text, "\n") {
+			if i == 0 {
+				b.WriteString(":   ")
+				b.WriteString(line)
+			} else if line != "" {
+				b.WriteString("    ")
+				b.WriteString(line)
+			}
+			b.WriteByte('\n')
+		}
+		return b.String()
+	case "q":
+		return `"` + renderKids(n, opt) + `"`
+	case "hr":
+		return "\n\n---\n\n"
 	case "br":
+		if opt.Inline {
+			return " "
+		}
 		if insideMark(n) {
 			return "\n"
 		}
 		return "  \n"
+	case "code", "kbd", "samp":
+		return wrapCode(renderKids(n, opt))
 	case "pre":
 		return "```\n" + strings.Trim(textContentHTML(n), "\n") + "\n```"
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		level := int(n.Data[1] - '0')
 		inner := strings.TrimSpace(renderKids(n, opt))
-		if inner == "" {
-			return ""
+		if opt.Inline {
+			return inner
 		}
-		line := strings.Repeat("#", level) + " " + inner
-		if opt.ClosedHeading {
+		line := strings.Repeat("#", level)
+		if inner != "" {
+			line += " " + inner
+		} else {
+			line += " "
+		}
+		if opt.ClosedHeading && inner != "" {
 			line += " " + strings.Repeat("#", level)
 		}
-		return line
+		return "\n\n" + line + "\n\n"
 	case "table":
 		if opt.PipeTables {
 			return renderHTMLTable(n, opt)
 		}
 		return renderBlock(n, opt)
 	case "p", "div", "section", "article", "main", "center", "header", "footer", "nav", "figure", "figcaption", "tbody", "thead", "tfoot", "tr", "dl":
-		return renderBlock(n, opt)
+		inner := strings.TrimSpace(renderBlock(n, opt))
+		if opt.Inline {
+			return " " + inner + " "
+		}
+		if inner == "" {
+			return ""
+		}
+		return "\n\n" + inner + "\n\n"
 	case "blockquote":
-		return prefixLines(renderBlock(n, opt), "> ")
+		return prefixLines(strings.Trim(renderBlock(n, opt), " \t\r\n"), "> ")
 	case "ul":
 		return renderList(n, false, opt)
 	case "ol":
@@ -185,61 +310,314 @@ func renderNode(n *html.Node, opt Options) string {
 }
 
 func renderHTMLTable(n *html.Node, opt Options) string {
-	var rows [][]string
+	type cell struct {
+		text string
+		span int
+	}
+	var rowCells [][]cell
+	var firstTR *html.Node
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "tr" {
-			var cells []string
+			if firstTR == nil {
+				firstTR = n
+			}
+			var cells []cell
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
 				if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
 					continue
 				}
-				cell := strings.TrimSpace(renderKids(c, opt))
-				cell = strings.ReplaceAll(cell, "\n", " ")
-				cells = append(cells, cell)
+				cellOpt := opt
+				cellOpt.Inline = true
+				text := strings.TrimSpace(strings.ReplaceAll(renderKids(c, cellOpt), "\n", " "))
+				span := 1
+				if v := attr(c, "colspan"); v != "" {
+					if _, err := fmt.Sscanf(v, "%d", &span); err != nil || span < 1 {
+						span = 1
+					}
+					if span > 1000 {
+						span = 1000
+					}
+				}
+				cells = append(cells, cell{text: text, span: span})
 			}
 			if len(cells) > 0 {
-				rows = append(rows, cells)
+				rowCells = append(rowCells, cells)
 			}
 			return
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && c.Data == "table" {
+				continue
+			}
 			walk(c)
 		}
 	}
+	var caption string
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "caption" {
+			caption = strings.TrimSpace(renderKids(c, opt))
+		}
+	}
 	walk(n)
-	return strings.TrimRight(table.Markdown(rows), "\n")
+	if len(rowCells) == 0 {
+		return ""
+	}
+	width := 0
+	for _, row := range rowCells {
+		n := 0
+		for _, c := range row {
+			n += c.span
+		}
+		if n > width {
+			width = n
+		}
+	}
+	writeRow := func(row []cell) string {
+		var b strings.Builder
+		b.WriteByte('|')
+		used := 0
+		for _, c := range row {
+			b.WriteByte(' ')
+			b.WriteString(c.text)
+			b.WriteString(strings.Repeat(" |", c.span))
+			used += c.span
+		}
+		for used < width {
+			b.WriteString(" |")
+			used++
+		}
+		return b.String()
+	}
+	header := false
+	headerWidth := width
+	if firstTR != nil {
+		desc := descendantCells(firstTR)
+		header = len(desc) > 0
+		span := 0
+		for _, c := range desc {
+			if c.Data != "th" {
+				header = false
+			}
+			span += cellSpan(c)
+		}
+		if span > headerWidth {
+			headerWidth = span
+		}
+	}
+	sep := "| " + strings.Join(repeat("---", headerWidth), " | ") + " |"
+	var b strings.Builder
+	if caption != "" {
+		b.WriteString(caption)
+		b.WriteString("\n\n")
+	}
+	if !header {
+		b.WriteString("| " + strings.Join(repeat("", headerWidth), " | ") + " |")
+		b.WriteByte('\n')
+		b.WriteString(sep)
+		b.WriteByte('\n')
+	}
+	for i, row := range rowCells {
+		b.WriteString(writeRow(row))
+		b.WriteByte('\n')
+		if i == 0 && header {
+			b.WriteString(sep)
+			b.WriteByte('\n')
+		}
+	}
+	return "\n\n" + strings.TrimRight(b.String(), "\n") + "\n\n"
+}
+
+func cellSpan(n *html.Node) int {
+	span := 1
+	if v := attr(n, "colspan"); v != "" {
+		if _, err := fmt.Sscanf(v, "%d", &span); err != nil || span < 1 {
+			return 1
+		}
+		if span > 1000 {
+			return 1000
+		}
+	}
+	return span
+}
+
+func descendantCells(tr *html.Node) []*html.Node {
+	var cells []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && (c.Data == "td" || c.Data == "th") {
+				cells = append(cells, c)
+			}
+			if c.Type == html.ElementNode {
+				walk(c)
+			}
+		}
+	}
+	walk(tr)
+	return cells
+}
+
+func repeat(s string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = s
+	}
+	return out
+}
+
+func rowIsHeader(table *html.Node) bool {
+	var first *html.Node
+	var find func(*html.Node)
+	find = func(n *html.Node) {
+		if first != nil {
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && c.Data == "tr" {
+				first = c
+				return
+			}
+			if c.Type == html.ElementNode && (c.Data == "thead" || c.Data == "tbody" || c.Data == "tfoot") {
+				find(c)
+			}
+		}
+	}
+	find(table)
+	if first == nil {
+		return false
+	}
+	if first.Parent != nil && first.Parent.Data == "thead" {
+		return true
+	}
+	saw := false
+	for c := first.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
+			continue
+		}
+		saw = true
+		if c.Data != "th" {
+			return false
+		}
+	}
+	return saw
 }
 
 func renderKids(n *html.Node, opt Options) string {
-	var b strings.Builder
+	var parts []string
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		b.WriteString(renderNode(c, opt))
+		if c.Type == html.TextNode && strings.TrimSpace(c.Data) == "" && (isHTMLBlock(c.PrevSibling) || isHTMLBlock(c.NextSibling)) {
+			continue
+		}
+		if s := renderNode(c, opt); s != "" {
+			parts = append(parts, s)
+		}
 	}
-	return b.String()
+	return joinMDChildren(parts)
+}
+
+func joinMDChildren(parts []string) string {
+	updated := []string{""}
+	for _, child := range parts {
+		leading, content, trailing := splitNL(child)
+		if updated[len(updated)-1] != "" && leading != "" {
+			prevTrail := updated[len(updated)-1]
+			updated = updated[:len(updated)-1]
+			n := len(prevTrail)
+			if len(leading) > n {
+				n = len(leading)
+			}
+			if n > 2 {
+				n = 2
+			}
+			leading = strings.Repeat("\n", n)
+		}
+		updated = append(updated, leading, content, trailing)
+	}
+	return strings.Join(updated, "")
+}
+
+func splitNL(s string) (leading, content, trailing string) {
+	i := 0
+	for i < len(s) && s[i] == '\n' {
+		i++
+	}
+	j := len(s)
+	for j > i && s[j-1] == '\n' {
+		j--
+	}
+	return s[:i], s[i:j], s[j:]
 }
 
 func renderList(n *html.Node, ordered bool, opt Options) string {
 	var b strings.Builder
 	i := 1
+	if ordered {
+		if v := attr(n, "start"); v != "" {
+			if _, err := fmt.Sscanf(v, "%d", &i); err != nil || i < 1 {
+				i = 1
+			}
+		}
+	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type != html.ElementNode || c.Data != "li" {
 			continue
 		}
 		item := strings.TrimSpace(renderKids(c, opt))
 		if item == "" {
+			if ordered {
+				i++
+			}
 			continue
 		}
+		var bullet string
 		if ordered {
-			fmt.Fprintf(&b, "%d. %s\n", i, item)
+			bullet = fmt.Sprintf("%d. ", i)
 			i++
 		} else {
-			b.WriteString("* ")
-			b.WriteString(item)
+			bullets := "*+-"
+			depth := ulDepth(c)
+			if depth < 0 {
+				depth = 0
+			}
+			bullet = string(bullets[depth%len(bullets)]) + " "
+		}
+		lines := strings.Split(item, "\n")
+		pad := strings.Repeat(" ", len(bullet))
+		for j, line := range lines {
+			if j == 0 {
+				b.WriteString(bullet)
+			} else if line != "" {
+				b.WriteString(pad)
+			}
+			b.WriteString(line)
 			b.WriteByte('\n')
 		}
 	}
-	return strings.TrimRight(b.String(), "\n")
+	body := strings.TrimRight(b.String(), "\n")
+	if insideLi(n) {
+		return "\n" + body
+	}
+	return "\n\n" + body
+}
+
+func ulDepth(n *html.Node) int {
+	depth := -1
+	for p := n; p != nil; p = p.Parent {
+		if p.Type == html.ElementNode && p.Data == "ul" {
+			depth++
+		}
+	}
+	return depth
+}
+
+func insideLi(n *html.Node) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Type == html.ElementNode && p.Data == "li" {
+			return true
+		}
+	}
+	return false
 }
 
 func prefixLines(s, prefix string) string {
@@ -248,8 +626,12 @@ func prefixLines(s, prefix string) string {
 	}
 	var b strings.Builder
 	for _, line := range strings.Split(s, "\n") {
-		b.WriteString(prefix)
-		b.WriteString(line)
+		if line == "" {
+			b.WriteByte('>')
+		} else {
+			b.WriteString(prefix)
+			b.WriteString(line)
+		}
 		b.WriteByte('\n')
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -339,25 +721,38 @@ func collapseSpaces(s string) string {
 	return " "
 }
 
+func chompMD(s string) (prefix, core, suffix string) {
+	if s != "" && s[0] == ' ' {
+		prefix = " "
+	}
+	if s != "" && s[len(s)-1] == ' ' {
+		suffix = " "
+	}
+	return prefix, strings.TrimSpace(s), suffix
+}
+
 func renderLink(n *html.Node, opt Options) string {
-	text := renderKids(n, opt)
-	if strings.TrimSpace(text) == "" {
+	prefix, text, suffix := chompMD(renderKids(n, opt))
+	if text == "" {
 		return ""
 	}
 	href := attr(n, "href")
 	title := attr(n, "title")
 	if href == "" {
-		return text
+		return prefix + text + suffix
 	}
 	quoted, ok := quoteHref(resolveURL(opt.Base, href))
-	if !ok {
-		return text
+	if !ok || quoted == "" || quoted == "#" {
+		return prefix + text + suffix
+	}
+	if title == "" && strings.ReplaceAll(text, `\_`, "_") == quoted {
+		return prefix + "<" + quoted + ">" + suffix
 	}
 	titlePart := ""
 	if title != "" {
 		titlePart = ` "` + strings.ReplaceAll(title, `"`, `\"`) + `"`
 	}
-	return "[" + text + "](" + quoted + titlePart + ")"
+	return prefix + "[" + text + "](" + quoted + titlePart + ")" + suffix
 }
 
 func renderImg(n *html.Node, opt Options) string {
@@ -526,6 +921,15 @@ func unwrapBing(href string) string {
 		return href
 	}
 	return string(b)
+}
+
+func hasAttr(n *html.Node, key string) bool {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func attr(n *html.Node, key string) string {

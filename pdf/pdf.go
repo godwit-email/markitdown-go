@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/godwit-email/markitdown-go"
@@ -22,14 +23,32 @@ func convertPDF(data []byte) (markitdown.Result, error) {
 	if err := contentStreams(r); err != nil {
 		return markitdown.Result{}, err
 	}
-	var b strings.Builder
-	for i := 1; i <= r.NumPage(); i++ {
+	n := r.NumPage()
+	wide := make([]bool, n)
+	anyWide := false
+	for i := 1; i <= n; i++ {
 		p := r.Page(i)
 		if p.V.IsNull() {
 			continue
 		}
-		text, err := plainText(p)
-		if err != nil || strings.TrimSpace(text) == "" {
+		wide[i-1] = wideColumns(p)
+		anyWide = anyWide || wide[i-1]
+	}
+	var b strings.Builder
+	partial := false
+	for i := 1; i <= n; i++ {
+		p := r.Page(i)
+		if p.V.IsNull() {
+			continue
+		}
+		// A prose page next to a wide-column page is what pdfplumber extracts
+		// with a 3pt word gap, so those words stay glued.
+		text, err := plainText(p, anyWide && !wide[i-1])
+		if err != nil {
+			partial = true
+			continue
+		}
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
 		if b.Len() > 0 {
@@ -39,9 +58,9 @@ func convertPDF(data []byte) (markitdown.Result, error) {
 	}
 	text := strings.Trim(b.String(), "\n")
 	if strings.TrimSpace(text) == "" {
-		return markitdown.Result{Partial: true}, nil
+		partial = true
 	}
-	return markitdown.Result{Text: text}, nil
+	return markitdown.Result{Text: text, Partial: partial}, nil
 }
 
 func contentStreams(r *pdfdoc.Reader) (err error) {
@@ -104,10 +123,8 @@ func countStream(v pdfdoc.Value, used *int, max int) error {
 	}
 }
 
-// shortcut: glyph positions become lines, not pdfplumber tables. A grid
-// matcher is a separate piece of work; bordered and borderless tables stay
-// short of the expected markdown until then.
-func plainText(p pdfdoc.Page) (text string, err error) {
+// shortcut: no table markdown. TestPDFFullOutput locks text-layer fragments.
+func plainText(p pdfdoc.Page, glue bool) (text string, err error) {
 	defer func() {
 		if recover() != nil {
 			text = ""
@@ -118,46 +135,169 @@ func plainText(p pdfdoc.Page) (text string, err error) {
 	if len(content.Text) == 0 {
 		return p.GetPlainText(nil)
 	}
-	var b strings.Builder
-	var prev *pdfdoc.Text
-	for i := range content.Text {
-		t := &content.Text[i]
-		if t.S == "" {
+	var items []pdfdoc.Text
+	for _, t := range content.Text {
+		if t.S == "" || t.S == "\n" {
 			continue
 		}
-		if t.S == "\n" {
-			b.WriteByte('\n')
-			prev = nil
-			continue
+		items = append(items, t)
+	}
+	if len(items) == 0 {
+		return "", nil
+	}
+	// Some fonts (CMTT10) paint a zero-width U+2126 on top of real glyphs.
+	// Fonts that report no widths at all (Helvetica in the form fixtures) are kept.
+	measured := map[string]bool{}
+	for _, t := range items {
+		if t.W > 0 {
+			measured[t.Font] = true
 		}
-		if prev != nil {
-			dy := t.Y - prev.Y
+	}
+	type line struct {
+		y     float64
+		size  float64
+		items []pdfdoc.Text
+	}
+	var lines []line
+	for _, t := range items {
+		best := -1
+		bestDy := 0.0
+		for i := range lines {
+			dy := t.Y - lines[i].y
 			if dy < 0 {
 				dy = -dy
 			}
-			if dy > 2 {
-				b.WriteByte('\n')
-				// A baseline jump bigger than one line is a blank line in the text layer.
-				line := prev.FontSize
-				if line < 8 {
-					line = 12
-				}
-				if dy > line*1.6 {
-					b.WriteByte('\n')
-				}
-			} else if gap := t.X - (prev.X + prev.W); gap > spaceGap(prev.FontSize) {
-				b.WriteByte(' ')
+			if dy <= 2 && (best < 0 || dy < bestDy) {
+				best = i
+				bestDy = dy
 			}
 		}
-		b.WriteString(t.S)
-		prev = t
+		if best >= 0 {
+			lines[best].items = append(lines[best].items, t)
+			if t.FontSize > lines[best].size {
+				lines[best].size = t.FontSize
+			}
+			continue
+		}
+		lines = append(lines, line{y: t.Y, size: t.FontSize, items: []pdfdoc.Text{t}})
+	}
+	sort.SliceStable(lines, func(i, j int) bool { return lines[i].y > lines[j].y })
+	// A raised footnote marker is its own baseline. Fold it into the line below.
+	folded := make([]line, 0, len(lines))
+	for _, ln := range lines {
+		if n := len(folded); n > 0 {
+			above := folded[n-1]
+			if above.size < ln.size && above.y-ln.y <= ln.size*0.5 {
+				ln.items = append(above.items, ln.items...)
+				folded[n-1] = ln
+				continue
+			}
+		}
+		folded = append(folded, ln)
+	}
+	lines = folded
+	var b strings.Builder
+	for li, ln := range lines {
+		sort.SliceStable(ln.items, func(i, j int) bool { return ln.items[i].X < ln.items[j].X })
+		if li > 0 {
+			b.WriteByte('\n')
+		}
+		var prev *pdfdoc.Text
+		for i := range ln.items {
+			t := &ln.items[i]
+			if t.W == 0 && measured[t.Font] {
+				continue
+			}
+			if prev != nil {
+				if gap := t.X - (prev.X + prev.W); gap > spaceGap(prev.FontSize, glue) {
+					b.WriteByte(' ')
+				}
+			}
+			b.WriteString(expandLigatures(t.S))
+			prev = t
+		}
 	}
 	return b.String(), nil
 }
 
-func spaceGap(fontSize float64) float64 {
+func spaceGap(fontSize float64, glue bool) float64 {
+	if glue {
+		return 3
+	}
 	if fontSize < 1 {
 		fontSize = 10
 	}
 	return fontSize * 0.15
 }
+
+// wideColumns reports a page whose lines break into three or more chunks
+// separated by 50pt, the same column test the Python form extractor uses.
+func wideColumns(p pdfdoc.Page) (ok bool) {
+	defer func() { recover() }()
+	content := p.Content()
+	type line struct {
+		y float64
+		x []float64
+		w []float64
+	}
+	var lines []line
+	for _, t := range content.Text {
+		if t.S == "" || t.S == "\n" {
+			continue
+		}
+		best := -1
+		bestDy := 0.0
+		for i := range lines {
+			dy := t.Y - lines[i].y
+			if dy < 0 {
+				dy = -dy
+			}
+			if dy <= 2 && (best < 0 || dy < bestDy) {
+				best = i
+				bestDy = dy
+			}
+		}
+		if best < 0 {
+			lines = append(lines, line{y: t.Y})
+			best = len(lines) - 1
+		}
+		lines[best].x = append(lines[best].x, t.X)
+		lines[best].w = append(lines[best].w, t.W)
+	}
+	for _, ln := range lines {
+		order := make([]int, len(ln.x))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(a, b int) bool { return ln.x[order[a]] < ln.x[order[b]] })
+		chunks := 0
+		prevEnd := 0.0
+		for i, idx := range order {
+			if i == 0 || ln.x[idx]-prevEnd > 50 {
+				chunks++
+			}
+			end := ln.x[idx] + ln.w[idx]
+			if end > prevEnd {
+				prevEnd = end
+			}
+		}
+		if chunks >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
+// The PDF fonts in these files map the fi glyph to U+FB01. Python's extractor
+// emits the two letters, so the fragment "benefit" only matches after expansion.
+var ligatures = strings.NewReplacer(
+	"\uFB00", "ff",
+	"\uFB01", "fi",
+	"\uFB02", "fl",
+	"\uFB03", "ffi",
+	"\uFB04", "ffl",
+	"\uFB05", "ft",
+	"\uFB06", "st",
+)
+
+func expandLigatures(s string) string { return ligatures.Replace(s) }
